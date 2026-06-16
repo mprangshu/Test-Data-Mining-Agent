@@ -12,9 +12,10 @@ Design rules (see CLAUDE.md):
 """
 from __future__ import annotations
 
+import operator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal, Optional, TypedDict
+from typing import Annotated, Any, Literal, Optional, TypedDict
 
 
 # --------------------------------------------------------------------------- #
@@ -35,6 +36,7 @@ TestOutcome = Literal["passed", "failed", "skipped", "error"]
 @dataclass
 class TestResult:
     """One test outcome from one run, normalised across all source formats."""
+    __test__ = False                  # not a pytest test class (name starts with "Test")
     test_id: str                      # fully-qualified test name (stable key)
     suite: str
     outcome: TestOutcome
@@ -110,8 +112,11 @@ class AgentState(TypedDict, total=False):
     report: Optional[dict[str, Any]]         # final prioritised report (persisted)
 
     # --- graceful degradation (append-only; never crash) ---
-    gaps: list[str]                          # explicit "we couldn't compute X" notes
-    errors: list[str]                        # NODE_ERROR notes
+    # operator.add reducers make every node's return APPEND to these lists instead of
+    # overwriting, and let the parallel detector fan-out write them concurrently without
+    # a LangGraph InvalidUpdateError. A node that has nothing to add returns [] (a no-op).
+    gaps: Annotated[list[str], operator.add]     # explicit "we couldn't compute X" notes
+    errors: Annotated[list[str], operator.add]   # NODE_ERROR notes
 
 
 def initial_state(

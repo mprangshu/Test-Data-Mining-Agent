@@ -13,5 +13,11 @@ chromadb>=0.5.0
 # --- Persistence (run store) ---
 pymongo>=4.6.0
 
+# --- Demo backend API (Phase 2) ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9     # required by FastAPI for multipart/form-data uploads
+
 # --- Dev / test ---
 pytest>=8.0.0
+httpx>=0.27.0               # FastAPI TestClient transport

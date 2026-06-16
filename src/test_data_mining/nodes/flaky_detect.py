@@ -18,7 +18,7 @@ provided it has >= min_runs_for_flaky observations; otherwise "insufficient_hist
 
 NOTE: this is intentionally simple and explainable. More advanced detectors (e.g. weighting
 recent runs, ignoring skips, per-commit grouping across multiple commits) are a good
-follow-up — see ROADMAP.md. Keep it deterministic; never ask an LLM for the score.
+follow-up — see docs/ROADMAP.md. Keep it deterministic; never ask an LLM for the score.
 """
 from __future__ import annotations
 

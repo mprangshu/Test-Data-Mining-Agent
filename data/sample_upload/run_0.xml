@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ci-run-0" tests="4" failures="2">
+  <testcase classname="com.example.checkout.CheckoutTest" name="test_pay" time="0.21"/>
+  <testcase classname="com.example.search.SearchTest" name="test_query" time="0.15">
+    <failure message="AssertionError: expected element to be visible">at Assertions.toBeVisible (expect.js:201)
+at SearchTest.run (search.spec.ts:73)</failure>
+  </testcase>
+  <testcase classname="com.example.auth.AuthTest" name="test_login" time="0.30"/>
+  <testcase classname="com.example.payments.PaymentsTest" name="test_charge" time="0.44">
+    <failure message="AssertionError: expected status 200 but got 500">at ApiClient.assertOk (client.js:90)
+at PaymentsTest.charge (payments.spec.ts:118)</failure>
+  </testcase>
+</testsuite>

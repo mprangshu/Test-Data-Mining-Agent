@@ -10,8 +10,6 @@ KEEP THE INVARIANTS (see CLAUDE.md): read-only, no Neo4j, deterministic detector
 """
 from __future__ import annotations
 
-from collections import defaultdict
-
 from ..state import AgentState, SuiteHealth
 
 
@@ -21,16 +19,30 @@ from ..state import AgentState, SuiteHealth
 def validate(state: AgentState) -> dict:
     """Quality gates: flag corrupt/insufficient data; set validation_ok.
 
-    TODO:
-      * mark validation_ok = False (and append to gaps) when raw_results is empty.
-      * detect runs with too little history for flaky detection and note it.
-      * keep going on partial data — never raise (graceful degradation, spec §1.4).
+    Rules (spec §1.4):
+      * Empty input -> validation_ok=False + a gap note. The downstream detectors still
+        run and degrade gracefully (they handle empty raw_results).
+      * Too little history is NOT a failure — it's a valid answer. We keep validation_ok=True
+        and flag a gap so the reader knows flaky verdicts will be "insufficient_history".
+      * Never raise — partial data flows through.
     """
     results = state.get("raw_results", [])
-    ok = len(results) > 0
-    gaps = [] if ok else ["validate: no parseable results found"]
-    print(f"NODE_EXIT validate: validation_ok={ok}, {len(results)} results")
-    return {"validation_ok": ok, "gaps": gaps}
+    min_runs = state.get("min_runs_for_flaky", 5)
+
+    if not results:
+        print("NODE_EXIT validate: validation_ok=False (no parseable results)")
+        return {"validation_ok": False, "gaps": ["validate: no parseable results found"]}
+
+    n_runs = len({r.run_id for r in results})
+    gaps: list[str] = []
+    if n_runs < min_runs:
+        gaps.append(
+            f"validate: only {n_runs} run(s) present; flaky detection needs >= {min_runs} "
+            f"runs at the same version — affected tests will report 'insufficient_history'"
+        )
+
+    print(f"NODE_EXIT validate: validation_ok=True, {len(results)} results across {n_runs} runs")
+    return {"validation_ok": True, "gaps": gaps}
 
 
 # --------------------------------------------------------------------------- #
@@ -49,40 +61,8 @@ def coverage_gap(state: AgentState) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# failure_clustering — vector + LLM (spec §2.3, §2.6, G3)
+# failure_clustering now lives in nodes/failure_clustering.py (ChromaDB vector clustering).
 # --------------------------------------------------------------------------- #
-def failure_clustering(state: AgentState) -> dict:
-    """Group failures by root-cause signature.
-
-    TODO (spec §2.6 — vector DB, NOT a graph DB):
-      1. Collect failure messages+stacks from raw_results where outcome in (failed, error).
-      2. Normalise each (strip line numbers, addresses, timestamps) -> signature string.
-      3. Embed signatures and cluster by cosine similarity in ChromaDB (threshold/HDBSCAN).
-      4. LLM labels each cluster (optionally RAG-grounded on past resolved failures).
-         -> the LLM only LABELS clusters; the vector DB FORMS them.
-
-    A trivial deterministic placeholder (exact-signature grouping) is below so the pipeline
-    runs end-to-end before ChromaDB is wired in. Replace with real embedding clustering.
-    """
-    results = state.get("raw_results", [])
-    buckets: dict[str, list] = defaultdict(list)
-    for r in results:
-        if r.outcome in ("failed", "error") and r.message:
-            buckets[r.message.strip()].append(r)
-
-    from ..state import FailureCluster
-    clusters = [
-        FailureCluster(
-            cluster_id=f"c{i:03d}",
-            signature=sig,
-            count=len(rows),
-            representative_trace=(rows[0].stack_trace or ""),
-            label=None,  # filled by LLM later
-        )
-        for i, (sig, rows) in enumerate(sorted(buckets.items(), key=lambda kv: -len(kv[1])))
-    ]
-    print(f"NODE_EXIT failure_clustering: {len(clusters)} placeholder clusters (replace w/ ChromaDB)")
-    return {"failure_clusters": clusters}
 
 
 # --------------------------------------------------------------------------- #
@@ -110,49 +90,35 @@ def suite_health(state: AgentState) -> dict:
 # review — HITL human node (L2 only) (spec §2.2)
 # --------------------------------------------------------------------------- #
 def review(state: AgentState) -> dict:
-    """Analyst confirms/filters findings before persistence (L2).
+    """Analyst confirms/filters findings before persistence (L2 only).
 
-    TODO: implement with LangGraph interrupt():
-        from langgraph.types import interrupt, Command
-        decision = interrupt({"flaky": state["flaky_findings"], ...})
-        # resume delivers the analyst's filter choices into review_decisions
-    Under L1/L3 this node is skipped by the conditional edge in graph.py.
+    Pauses the graph with ``interrupt()``, surfacing the current flaky tests and failure
+    clusters for the analyst. Resuming with ``Command(resume=<decisions>)`` delivers the
+    analyst's choices (``{"dismissed_flaky": [...], "dismissed_clusters": [...]}``) which
+    ``synthesis`` then honours. Under L1/L3 the conditional edge in graph.py skips this node,
+    so ``interrupt()`` is never reached.
     """
-    return {"review_decisions": state.get("review_decisions", {})}
+    from langgraph.types import interrupt  # lazy: package stays importable without langgraph
 
-
-# --------------------------------------------------------------------------- #
-# synthesis — LLM (spec §2.3, G5)
-# --------------------------------------------------------------------------- #
-def synthesis(state: AgentState) -> dict:
-    """Rank findings + write prioritised recommendations via the Hub LLM router.
-
-    TODO:
-      * call the Hub Python LLM router (Anthropic default) — never a standalone key.
-      * input: flaky_findings + coverage_findings + failure_clusters + suite_health
-               (after review filtering under L2).
-      * output: a structured report dict (ranked findings + human-readable recommendations).
-      * verify any LLM-claimed root cause against raw data before including it (anti-hallucination).
-    """
-    report = {
-        "flaky": [f.test_id for f in state.get("flaky_findings", []) if f.verdict == "flaky"],
-        "clusters": [{"signature": c.signature, "count": c.count}
-                     for c in state.get("failure_clusters", [])],
-        "suite_health": state.get("suite_health"),
-        "recommendations": ["TODO: LLM-generated prioritised recommendations"],
+    flaky = [f for f in state.get("flaky_findings", []) if f.verdict == "flaky"]
+    payload = {
+        "flaky": [
+            {"test_id": f.test_id, "flakiness_score": f.flakiness_score,
+             "pass_count": f.pass_count, "fail_count": f.fail_count,
+             "runs_observed": f.runs_observed}
+            for f in flaky
+        ],
+        "clusters": [
+            {"cluster_id": c.cluster_id, "label": c.label,
+             "signature": c.signature, "count": c.count}
+            for c in state.get("failure_clusters", [])
+        ],
     }
-    print("NODE_EXIT synthesis: placeholder report assembled (wire LLM router)")
-    return {"report": report}
+    decision = interrupt(payload)              # ← pauses here under L2
+    return {"review_decisions": decision or {}}
 
 
 # --------------------------------------------------------------------------- #
-# persist — deterministic (spec §2.3)
+# synthesis now lives in nodes/synthesis.py (ranking + grounded recommendations).
+# persist now lives in nodes/persist.py (MongoDB run store / local JSON fallback).
 # --------------------------------------------------------------------------- #
-def persist(state: AgentState) -> dict:
-    """Persist the report to the run store (MongoDB).
-
-    TODO: write state["report"] to the MongoDB run store via the platform's persistence
-    layer. NO Neo4j, NO KG_SIGNAL_* events. For local dev you may dump JSON to data/reports/.
-    """
-    print("NODE_EXIT persist: TODO write report to MongoDB run store")
-    return {}

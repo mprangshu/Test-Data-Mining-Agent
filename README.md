@@ -35,9 +35,28 @@ pytest -q
 # 5. score the deterministic detector against the golden set
 python scripts/score_golden.py
 
-# 6. (after building out the LLM/vector nodes) run the full graph
-python -m test_data_mining.graph --input data/fixtures --autonomy L2
+# 6. run the full graph from the CLI
+python -m test_data_mining.graph --input data/fixtures --autonomy L1
 ```
+
+## Run the full demo (web UI)
+
+The interactive demo is a FastAPI backend + a React/Tailwind frontend (see
+[`docs/demo-overview.md`](docs/demo-overview.md)).
+
+```powershell
+# one-time setup
+python -m venv .venv ; .\.venv\Scripts\pip install -r requirements.txt
+cd frontend ; npm install ; cd ..
+
+# launch backend (:8000) + frontend (:5173) in two windows
+powershell -ExecutionPolicy Bypass -File scripts\run_demo.ps1
+```
+
+Or start them manually: `uvicorn backend.app:app --port 8000` and (in `frontend/`) `npm run dev`.
+Then open **http://localhost:5173**, switch to the **Upload files** tab, and add the six
+`data/sample_upload/run_*.xml` files (two tests are intentionally flaky). Pick **L2** autonomy
+to see the human-in-the-loop review gate pause before the report.
 
 ## Project layout
 
@@ -45,34 +64,49 @@ python -m test_data_mining.graph --input data/fixtures --autonomy L2
 test-data-mining-agent/
 ├── CLAUDE.md                  # Claude Code contract (read first)
 ├── README.md                  # this file
-├── DATA.md                    # data sourcing decision + how to get/generate data
-├── ROADMAP.md                 # node-by-node build checklist
 ├── requirements.txt
 ├── docs/
-│   └── test-data-mining.md    # the approved ADLC spec (source of truth)
+│   ├── test-data-mining.md    # the approved ADLC spec (source of truth)
+│   ├── demo-overview.md       # senior overview of the demo UI + architecture
+│   ├── BUILD-PLAN.md          # phased build TODO (agent + API + React UI)
+│   ├── UNDERSTANDING.md       # plain-language project explainer
+│   ├── ROADMAP.md             # node-by-node build checklist
+│   └── DATA.md                # data sourcing decision + how to get/generate data
 ├── src/test_data_mining/
-│   ├── state.py               # AgentState contract  [DONE]
+│   ├── state.py               # AgentState contract
 │   ├── graph.py               # StateGraph wiring + conditional HITL routing
 │   └── nodes/
-│       ├── ingest.py          # JUnit XML + Playwright JSON parsers  [DONE, working]
-│       ├── flaky_detect.py    # deterministic flakiness scoring      [DONE, working]
-│       └── stubs.py           # validate / coverage / clustering / review / synthesis / persist  [TODO]
+│       ├── ingest.py          # JUnit XML + Playwright JSON parsers
+│       ├── flaky_detect.py    # deterministic flakiness scoring
+│       ├── failure_clustering.py  # ChromaDB vector clustering + grounded labels
+│       ├── synthesis.py       # ranked findings + grounded recommendations (LLM seam)
+│       ├── persist.py         # MongoDB run store / local JSON fallback
+│       └── stubs.py           # validate / coverage_gap / suite_health / review
+├── backend/
+│   └── app.py                 # FastAPI: /analyse, /analyse/stream (trace), /resume (L2 HITL)
+├── frontend/                  # React + Vite + Tailwind single-page demo UI
+│   └── src/                   # InputPanel · TracePanel · ReviewGate · ReportView
 ├── scripts/
-│   ├── generate_fixtures.py   # synthetic data + golden labels       [DONE, working]
-│   └── score_golden.py        # Phase-4 precision/recall harness      [DONE, working]
+│   ├── generate_fixtures.py   # synthetic data + golden labels
+│   ├── score_golden.py        # precision/recall harness
+│   └── run_demo.ps1           # one-command launcher (backend + frontend)
 ├── data/
-│   ├── fixtures/              # generated test-execution data
-│   └── golden/                # ground-truth labels for scoring
-└── tests/
-    └── test_flaky_detect.py   # starter unit tests                    [DONE]
+│   ├── fixtures/  golden/     # generated data + ground-truth labels
+│   └── sample_upload/         # ready-to-upload demo runs (2 flaky tests)
+└── tests/                     # unit + integration + adversarial + backend/API
 ```
 
 ## Current status
 
-The **deterministic core works today**: ingest parses both MVP formats, the flaky detector
-scores against ground truth, and the included golden-set run meets the spec targets
-(flaky precision ≥ 0.85, recall ≥ 0.75). The vector-clustering and LLM nodes are scaffolded
-stubs with spec-anchored TODOs — see `ROADMAP.md` for the build order.
+**The full pipeline and demo work end-to-end.** Deterministic detectors (flaky, suite-health)
+meet the spec targets (flaky precision ≥ 0.85, recall ≥ 0.75); failure clustering runs on
+ChromaDB (offline, local embeddings); synthesis ranks findings and writes grounded
+recommendations; reports persist to MongoDB (or local JSON). The web UI streams a live agent
+trace and supports the L2 review gate. The build history is in [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md).
+
+> **LLM note:** per the spec, LLM use (cluster labels, synthesis narrative) is routed through
+> the Hub LLM router — never a standalone key in this repo. Those are wired as ready injection
+> seams; the offline default is deterministic + grounded, with anti-hallucination checks intact.
 
 ## Hard rules (do not violate)
 

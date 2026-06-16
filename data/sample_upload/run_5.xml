@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="ci-run-5" tests="4" failures="1">
+  <testcase classname="com.example.checkout.CheckoutTest" name="test_pay" time="0.18"/>
+  <testcase classname="com.example.search.SearchTest" name="test_query" time="0.16"/>
+  <testcase classname="com.example.auth.AuthTest" name="test_login" time="0.30"/>
+  <testcase classname="com.example.payments.PaymentsTest" name="test_charge" time="0.40">
+    <failure message="AssertionError: expected status 200 but got 500">at ApiClient.assertOk (client.js:90)
+at PaymentsTest.charge (payments.spec.ts:118)</failure>
+  </testcase>
+</testsuite>

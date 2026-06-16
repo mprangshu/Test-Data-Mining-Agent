@@ -76,7 +76,7 @@ Conditional routing: the `review` node is **skipped under L1/L3** (routes straig
 
 ---
 
-## Build order (do them in this sequence — see ROADMAP.md for the checklist)
+## Build order (do them in this sequence — see docs/ROADMAP.md for the checklist)
 
 Deterministic, independently-testable nodes first; LLM nodes last.
 
@@ -101,7 +101,7 @@ Deterministic, independently-testable nodes first; LLM nodes last.
 | Coverage reports (JaCoCo/lcov) | XML / lcov | Phase 2 |
 | Test↔requirement linkage | MongoDB refs | Phase 2 |
 
-See `DATA.md` for how to get/generate data. **Use `scripts/generate_fixtures.py` to produce
+See `docs/DATA.md` for how to get/generate data. **Use `scripts/generate_fixtures.py` to produce
 test data immediately** — it writes JUnit XML + Playwright JSON across multiple runs with a
 known-flaky ground-truth set into `data/fixtures/` and `data/golden/`.
 

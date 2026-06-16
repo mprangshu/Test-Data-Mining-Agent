@@ -379,8 +379,8 @@ So when you open the repo, you know what you're looking at:
 | `tests/test_flaky_detect.py` | Automated tests for the detector |
 | `data/fixtures/` | The generated test data |
 | `data/golden/` | The answer key (which tests are truly flaky) |
-| `ROADMAP.md` | The step-by-step build checklist |
-| `DATA.md` | Where the data comes from and why we generate our own |
+| `docs/ROADMAP.md` | The step-by-step build checklist |
+| `docs/DATA.md` | Where the data comes from and why we generate our own |
 
 A good first exercise: open `state.py` and read the field names — that single file tells you
 everything the agent tracks. Then open `flaky_detect.py` and see how a real node reads the state
@@ -418,7 +418,7 @@ set of real failures to grade the agent on genuine data too.
 
 (There are public datasets — IDoFT, FlakeFlagger, a Kaggle CI/CD dataset — but none is in the
 exact raw format the agent reads *and* pre-labelled, so they're useful for added realism later,
-not for getting started. `DATA.md` has the full reasoning.)
+not for getting started. `docs/DATA.md` has the full reasoning.)
 
 ---
 
@@ -445,6 +445,6 @@ look up here when you need it.
 2. Open `state.py`, then `flaky_detect.py`, with §5 and §8 beside you.
 3. Run the three commands in the README (`generate_fixtures.py`, `pytest`, `score_golden.py`) and
    watch the numbers — seeing it work makes it real.
-4. Open `ROADMAP.md` and look at the next unchecked milestone. That's what gets built next.
+4. Open `docs/ROADMAP.md` and look at the next unchecked milestone. That's what gets built next.
 
 Whenever a word stops you, come back to the glossary in §3.

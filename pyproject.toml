@@ -1,0 +1,12 @@
+# Project tooling config. (No [build-system] — this repo runs from source via PYTHONPATH=src;
+# nodes/scripts/tests insert src/ on sys.path, matching the platform's run-from-source layout.)
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # ChromaDB 1.5.x warns about our custom (intentionally minimal) embedding function config.
+    # We always pass embeddings explicitly, so this is cosmetic — silence it.
+    "ignore:legacy embedding function config:DeprecationWarning",
+    # FastAPI TestClient transport deprecation — test-only, not our code (custom warning class).
+    "ignore:Using `httpx` with `starlette.testclient`",
+]

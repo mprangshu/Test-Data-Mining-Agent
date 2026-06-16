@@ -10,7 +10,7 @@ Conditional routing: the `review` HITL node runs only under L2; L1/L3 route stra
 `synthesis`.
 
 This module requires `langgraph` (see requirements.txt). The nodes it wires are already
-importable; the LLM-dependent ones are placeholders until built out (see ROADMAP.md).
+importable; the LLM-dependent ones are placeholders until built out (see docs/ROADMAP.md).
 """
 from __future__ import annotations
 
@@ -19,14 +19,14 @@ import argparse
 from .state import AgentState, AutonomyLevel, initial_state
 from .nodes.ingest import ingest
 from .nodes.flaky_detect import flaky_detect
+from .nodes.failure_clustering import failure_clustering
+from .nodes.synthesis import synthesis
+from .nodes.persist import persist
 from .nodes.stubs import (
     validate,
     coverage_gap,
-    failure_clustering,
     suite_health,
     review,
-    synthesis,
-    persist,
 )
 
 
