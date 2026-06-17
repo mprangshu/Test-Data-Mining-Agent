@@ -1,142 +1,147 @@
-# CLAUDE.md — Test Data Mining Agent
+# CLAUDE.md — Test Data Mining Agent (v2)
 
-> This file is auto-loaded by Claude Code. It is the single source of truth for how to
-> work on this project. Read it fully before writing code. The authoritative design is
-> `docs/test-data-mining.md` (the approved ADLC spec) — this file is the working summary.
+> Auto-loaded by Claude Code. Single source of truth for how to work on this project.
+> **Authoritative design: [`docs/TDM-PIVOT-v2.md`](docs/TDM-PIVOT-v2.md)** — it supersedes the
+> original analysis-agent spec (`docs/test-data-mining.md`) and the earlier pivot note. Read the
+> pivot doc fully before writing code; this file is the working summary. The build sequence and
+> phase status live in [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md).
+>
+> **⚠ The agent has pivoted.** v1 was a read-only CI-results *analysis* agent (flaky detection,
+> failure clustering, quality report) and is **fully built but now retired** — kept in git history
+> and referenced by the old spec. We are now building **v2: a test-data *generation* agent.**
 
 ---
 
-## What we are building
+## What we are building (v2)
 
-A **read-only, LangGraph-based analysis agent** that mines a project's CI/CD test-execution
-data and produces a prioritised quality-intelligence report. It detects flaky tests, surfaces
-coverage gaps, clusters recurring failures by root-cause signature, and tracks suite-health
-trends. **It never modifies tests or pipelines** — it only surfaces insights.
+An agent that **generates accurate, ready-to-use test data**. It takes **test cases / user
+stories** (primary input) **plus** their **JUnit/Playwright result files** (supporting input),
+mines existing data from **MongoDB** and similar data from **ChromaDB**, detects **coverage gaps**
+from the result files, then **generates new test data** — offering the QA engineer **2–3 candidate
+value sets per field** in a human-in-the-loop gate. The chosen sets are assembled into rows,
+**downloaded as CSV**, and **optionally saved back to MongoDB** (and upserted to ChromaDB) for reuse.
 
-- **Agent ID:** `test-data-mining`
-- **Architecture:** L2 · multi-node LangGraph `StateGraph` (analysis → review → synthesis → persist)
-- **Default autonomy:** L2 · Supervised (one human-in-the-loop review gate before persist)
+- **Agent ID:** `test-data-mining` (unchanged)
+- **Architecture:** L2 · multi-node LangGraph `StateGraph` (gather → generate → review → synthesise → persist)
+- **Default autonomy:** L2 · Supervised (set-selection HITL + persist gate)
+- **Output:** rows of test data (**CSV**), not a quality report.
 - **Language:** Python 3.11+
 
-## The five goals (from spec §1.2)
+## The two inputs (the heart of v2)
+
+| Input | Role | Formats | Drives |
+|---|---|---|---|
+| **Primary — test cases / user stories** | *what fields are needed* | `.xlsx`, `.csv`, `.json`, `.txt` (Gherkin/acceptance) | the field list to generate for |
+| **Supporting — test results** | *what was actually tested + real values* | JUnit/TestNG `.xml`, Playwright `.json` | (1) coverage-gap detection, (2) realistic **seed values** from passing runs |
+
+Supporting docs do double duty: **fill gaps** (scenario types never exercised) and **seed realism**
+(real values from *passing* runs become few-shot examples for the LLM/generator).
+
+## The five goals (reframed for v2)
 
 | ID | Goal |
 |----|------|
-| G1 | Flaky-test detection — non-deterministic pass/fail without a code change, ranked by score |
-| G2 | Coverage-gap surfacing — modules/requirements with low, missing, or declining coverage |
-| G3 | Failure clustering — group failures by root-cause signature (normalised error + stack) |
-| G4 | Suite-health trend — pass rate, mean duration, flake rate over a window |
-| G5 | Prioritised report — synthesise the above into a ranked, recommendation-bearing report |
+| G1 | **Parse fields** — extract required fields, constraints, scenario types from test cases/stories |
+| G2 | **Read results** — parse supporting JUnit/Playwright → per-scenario outcomes + seed values |
+| G3 | **Mine existing** — MongoDB lookup + ChromaDB similarity for reusable data |
+| G4 | **Coverage gaps + generate** — find untested field×scenario combos; generate 2–3 candidate value SETS per field, gap-filling and seeded, all constraint-valid |
+| G5 | **Set-based HITL → dataset** — analyst picks one set per field; assemble rows → CSV → optional save-back to MongoDB |
 
 ---
 
-## Architecture rules — DO NOT VIOLATE
+## Architecture rules — DO NOT VIOLATE (invariants, pivot §11)
 
-These are hard constraints from the approved spec. Treat them as invariants.
-
-1. **READ-ONLY.** The agent surfaces findings and recommendations. It must never disable,
-   quarantine, rewrite, or skip tests, and never mutate a pipeline. No node may perform a
-   write to any test or CI system.
-2. **NO GRAPH DATABASE. NO NEO4J.** Failure clustering uses a **vector DB (ChromaDB)** +
-   cosine similarity. Phase-2 requirement linkage uses **MongoDB** document refs + a shallow
-   aggregation (1–2 hop lookup). Do not introduce Neo4j or any graph DB anywhere. Do not emit
-   `KG_SIGNAL_*` events — this agent has no knowledge-graph dependency.
-3. **Deterministic first, LLM last.** Statistical detectors (flaky, coverage, trend) are pure
-   Python and fully reproducible. The LLM is used ONLY for: failure-message normalisation,
-   cluster labelling, and final synthesis. Never let an LLM compute a flakiness score.
-4. **Graceful degradation.** On malformed/partial data, return partial results with explicit
-   gaps flagged — never crash. Use the platform `NODE_ERROR` convention.
-5. **Insufficient history is a valid answer.** Flaky detection needs ≥ N runs at the same
-   commit/version. With too little history, report `"insufficient_history"` rather than guess.
+1. **READ-BEFORE-WRITE on MongoDB.** The entire mine phase is read-only. The **only** write is the
+   explicit `persist` gate, and **only** when the analyst sets `save=true`.
+2. **NO GRAPH DATABASE. NO NEO4J.** Vectors → **ChromaDB**; documents → **MongoDB**. No graph DB
+   anywhere. Do not emit `KG_SIGNAL_*` events.
+3. **DETERMINISTIC BEFORE LLM.** `parse`, `load_results`, `mongo_lookup`, `vector_search`,
+   `coverage_gap` are pure/deterministic and run **before** `generate` (the LLM step).
+4. **GRACEFUL DEGRADATION.** Any store unreachable or input malformed → empty result + a `gaps`
+   note, **never crash**. No MongoDB data at all → pure-LLM generation path (expected first run).
+5. **LLM VIA HUB ROUTER.** No standalone API keys in this repo. LLM use is an **injection seam** on
+   `generate` and `synthesise` (`node(state, llm=None)`); offline default = deterministic
+   faker-style generation seeded by real values.
+6. **ANTI-HALLUCINATION.** Every generated value must satisfy the field's `constraints`
+   (e.g. currency ∈ ISO-4217, email format) **before** it becomes a candidate set — regenerate on failure.
 
 ---
 
-## LangGraph topology (spec §2.2)
+## LangGraph topology (pivot §3)
 
 ```
-ingest → validate → [ flaky_detect | coverage_gap | failure_clustering ]  (parallel)
-       → review (HITL, L2 only) → synthesis → persist
+parse → [ load_results | mongo_lookup | vector_search ]  (parallel after parse)
+      → coverage_gap → generate → review (HITL set-based, L2 only) → synthesise → persist
 ```
 
-Conditional routing: the `review` node is **skipped under L1/L3** (routes straight to
-`synthesis`) and **active under L2** via `interrupt()` → `Command(resume=...)`.
+`coverage_gap` depends on `load_results`. `review` is **skipped under L1/L3** (L1 auto-picks the
+set with the widest scenario coverage) and **active under L2** via `interrupt()` → `Command(resume=…)`.
+`persist` runs only when the persist gate is `save=true`.
 
-## Node responsibilities (spec §2.3)
+## Node responsibilities (pivot §3 / §10)
 
 | Node | Type | Responsibility |
 |------|------|----------------|
-| `ingest` | deterministic | Load configured sources, normalise to a common test-result schema |
-| `validate` | deterministic | Quality gates; mark insufficient history / corrupt files |
-| `flaky_detect` | deterministic | Pass/fail variance per test across same-version runs → score |
-| `coverage_gap` | deterministic | MVP: module/file coverage from the report directly |
-| `failure_clustering` | vector + LLM | Embed normalised failures → ChromaDB → cosine cluster; LLM labels clusters |
-| `review` | human (HITL) | Analyst confirms/filters findings before persistence (L2 only) |
-| `synthesis` | LLM | Rank findings, generate prioritised recommendations |
-| `persist` | deterministic | Persist report to the run store (MongoDB) |
+| `parse` | deterministic | Extract required fields, constraints, scenario types from the **primary** inputs |
+| `load_results` | deterministic | Parse **supporting** JUnit/Playwright → `result_signals` + `seed_values` (passing-run values) |
+| `mongo_lookup` | deterministic | Query MongoDB for existing data matching test-case IDs / story keys |
+| `vector_search` | vector (ChromaDB) | Embed fields+story; pull top-K similar stored datasets |
+| `coverage_gap` | deterministic | `required fields × {valid,boundary,negative,edge}` minus what results exercised |
+| `generate` | LLM (seam) | Per field: 2–3 candidate value **sets** (valid / gap-filling / edge), seeded + constraint-valid |
+| `review` | HITL (L2) | Pause; analyst picks one set per field (or excludes); resume drives synthesise |
+| `synthesise` | deterministic + LLM | Assemble final rows from chosen sets; resolve cross-field constraints; write report |
+| `persist` | deterministic (gated) | If `save=true`: write dataset to MongoDB + upsert ChromaDB. No Neo4j, no KG signals |
 
 ---
 
-## Build order (do them in this sequence — see docs/ROADMAP.md for the checklist)
+## Build order
 
-Deterministic, independently-testable nodes first; LLM nodes last.
+Follow [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md) (v2 phases). Pivot §12 build order, in short:
+`state.py → parse → load_results → generate_fixtures (seed Mongo+Chroma+inputs) → mongo_lookup →
+vector_search → coverage_gap → generate → graph → backend (/mine,/resume,/persist) → review →
+synthesise → persist → frontend (InputPanel, ReviewGate, ReportView, PersistGate, api, download,
+TracePanel) → tests`. Deterministic data-gathering first; LLM `generate`/`synthesise` last.
 
-1. `state.py` — the `AgentState` TypedDict (the contract every node reads/writes). **DONE (stub).**
-2. `ingest` — JUnit/TestNG XML + Playwright JSON parsers → normalised `TestResult` records.
-3. `validate` — schema/quality gates, insufficient-history flag.
-4. `flaky_detect` — deterministic flakiness score. **A working reference version is provided.**
-5. `coverage_gap` — module/file coverage parsing (JaCoCo/lcov is Phase 2).
-6. `failure_clustering` — ChromaDB embed + cluster (LLM labels last).
-7. `synthesis` — LLM ranking + recommendations.
-8. `persist` — write report to the run store.
-9. Wire conditional `review` routing per autonomy level in `graph.py`.
+## File changes vs v1 (pivot §6)
 
-## Data sources (spec §1.3) — MVP marked ✅
+- **Delete:** `nodes/flaky_detect.py`, `nodes/failure_clustering.py`, `nodes/synthesis.py`,
+  `nodes/stubs.py`, `scripts/score_golden.py`, `tests/test_flaky_detect.py`, `tests/test_validate.py`.
+- **Rewrite:** `state.py` (new schema, pivot §4), `graph.py`, `nodes/persist.py`, `backend/app.py`,
+  `scripts/generate_fixtures.py`; split `nodes/ingest.py` → `nodes/parse.py` + `nodes/load_results.py`.
+- **Create:** `nodes/{parse,load_results,mongo_lookup,vector_search,coverage_gap,generate,review,synthesise}.py`.
+- **Frontend:** new `InputPanel` (two buckets), rewrite `ReviewGate` (per-field radio sets),
+  rewrite `ReportView` (CSV + coverage), **new `PersistGate`**, `api.js`/`download.js` (CSV primary).
+- **Deps:** add `openpyxl` (xlsx test-case sheets); keep `lxml` (JUnit still parsed as supporting input).
 
-| Source | Format | MVP? |
-|--------|--------|------|
-| JUnit / TestNG reports | XML | ✅ |
-| Playwright results | JSON | ✅ |
-| Per-test logs | stdout/stderr text | ✅ |
-| Pass/fail history | run-over-run series | ✅ |
-| Coverage reports (JaCoCo/lcov) | XML / lcov | Phase 2 |
-| Test↔requirement linkage | MongoDB refs | Phase 2 |
+## Canonical data schema
 
-See `docs/DATA.md` for how to get/generate data. **Use `scripts/generate_fixtures.py` to produce
-test data immediately** — it writes JUnit XML + Playwright JSON across multiple runs with a
-known-flaky ground-truth set into `data/fixtures/` and `data/golden/`.
+Fixtures and the demo are built around the order-flow schema (pivot §9), columns:
+`order_id, customer_name, email, country, currency, payment_method, card_number_masked,
+item_count, order_total, coupon_code, order_status, created_at, scenario_tag, data_category`.
+A reference `tdm_demo_output.csv` defines this shape. **If that file is not present in the repo,
+synthesise one from the column list above** (noted in BUILD-PLAN) so fixtures stay faithful.
 
 ---
 
 ## Conventions
 
-- **Structured log prefixes** (reuse platform style): `NODE_ENTER` / `NODE_EXIT`,
-  `WS_EVENT`, `LLM_CALL` / `LLM_RESP`, `NODE_ERROR`. No `KG_SIGNAL_*`.
-- **LLM access** goes through the Hub's Python LLM router (Anthropic default) — never a
-  standalone API key in this repo.
-- **Checkpointer:** `MemorySaver` for the MVP.
-- **Parsing:** stdlib `xml.etree` is fine for the reference parser; `junitparser`/`lxml` are
-  listed in requirements for richer parsing if needed. Playwright results are native JSON.
-- Every node is a pure function `def node(state: AgentState) -> dict:` returning only the
-  state keys it updates. Keep side effects (I/O, LLM calls) explicit and injected where possible
-  so nodes stay unit-testable.
+- **Structured log prefixes:** `NODE_ENTER` / `NODE_EXIT`, `WS_EVENT`, `LLM_CALL` / `LLM_RESP`,
+  `NODE_ERROR`. No `KG_SIGNAL_*`.
+- **LLM access** via the Hub Python LLM router (Anthropic default) — never a standalone key.
+- **Checkpointer:** `MemorySaver` for the MVP (required for `interrupt()`/resume).
+- **Parsing:** stdlib `xml.etree` for JUnit; native JSON for Playwright; `openpyxl` for xlsx;
+  stdlib `csv` for csv; lightweight Gherkin parse for `.txt`. `lxml` available for richer XML.
+- Every node is a pure function `def node(state: AgentState) -> dict:` returning only the keys it
+  updates. Keep I/O and LLM calls injected (`node(state, llm=None)`) so nodes stay unit-testable.
+- **Reuse v1 plumbing:** LangGraph `interrupt()`/resume, the NDJSON streaming backend, the offline
+  deterministic ChromaDB embedder, and the `gaps`/`errors` accumulate-reducers all carry over.
 
 ## Commands
 
 ```bash
-# install
 pip install -r requirements.txt
-
-# generate test data (no external deps — stdlib only)
-python scripts/generate_fixtures.py
-
-# run tests
+python scripts/generate_fixtures.py          # seed MongoDB(local JSON) + ChromaDB + sample inputs/results
 pytest -q
-
-# (later) run the graph against generated fixtures
-python -m test_data_mining.graph --input data/fixtures
+uvicorn backend.app:app --port 8000          # API: /mine, /resume, /persist
+# frontend: cd frontend && npm run dev   (or scripts/run_demo.ps1)
 ```
-
-## Success metrics to hold yourself to (spec §1.5)
-
-Flaky precision ≥ 0.85, flaky recall ≥ 0.75, coverage-gap F1 ≥ 0.80. The golden set in
-`data/golden/` is what you score against.
