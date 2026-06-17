@@ -27,7 +27,7 @@
 | 0 | ✅ Teardown + new `state.py` + deps; green (empty) baseline | — |
 | 1 | ✅ Inputs parsed: `parse` (test cases) + `load_results` (results → signals + seeds) | 0 |
 | 2 | ✅ Sample data + stores: `generate_fixtures` seeds Mongo/Chroma/inputs; `mongo_lookup` + `vector_search` | 1 |
-| 3 | Gaps + generation: `coverage_gap` + `generate` (2–3 constraint-valid sets/field) | 2 |
+| 3 | ✅ Gaps + generation: `coverage_gap` + `generate` (2–3 constraint-valid sets/field) | 2 |
 | 4 | Graph wired + backend `/mine` + `/resume`; pipeline runs to review interrupt; auto-resume in tests → `final_dataset` 🎯 | 3 |
 | 5 | Frontend: two-bucket upload → mine → trace to the review gate | 4 |
 | 6 | Set-based HITL: `review` interrupt + `ReviewGate` radios + `/resume` → CSV report + download 🎯 | 5 |
@@ -101,15 +101,17 @@ The working v1 lives on the `v1` branch.
 ## Phase 3 — Coverage gaps + generation
 *Goal: the analytical + generative core (deterministic default, LLM seam).*
 
-- [ ] `nodes/coverage_gap.py` — matrix `required fields × {valid,boundary,negative,edge}` minus what
-      `result_signals` exercised → `coverage_gaps`.
-- [ ] `nodes/generate.py` — per field, 2–3 `CandidateSet`s: `gen_A` valid-leaning (seeded),
-      `gen_B` boundary/negative (gap-filling), optional `gen_C` edge; pass through `existing`/`retrieved`
-      as selectable sets. 🔒 every value constraint-valid (regen on failure). LLM seam
-      `generate(state, llm=None)`; offline default = deterministic faker seeded by real values.
-- [ ] Unit tests: gaps detected from signals; sets are constraint-valid; gap-filling set targets the gap.
+- [x] `nodes/coverage_gap.py` — matrix `required fields × {valid,boundary,negative,edge}` minus what
+      `result_signals` exercised → `coverage_gaps` (a scenario that ran-but-failed counts as exercised).
+- [x] `nodes/generate.py` — per field: `gen_A` valid-leaning (seeded from real values, **Gemini-enriched
+      when available**, constraint-validated), `gen_B` gap-filling (targets the field's gaps), plus
+      pass-through `existing`/`retrieved` sets. 🔒 anti-hallucination: valid values validated against
+      constraints. LLM seam `generate(state, llm=None)`; offline default = deterministic, seeded.
+- [x] Unit tests: gaps from signals; constraint-valid sets; gap-filling targets the gap (`test_coverage_gap`, `test_generate`).
 
-**Done when:** `generate` emits `candidate_sets` (FieldCandidates) with valid + gap-filling variants.
+**Done when:** `generate` emits `candidate_sets` (FieldCandidates) with valid + gap-filling variants. ✅
+**Verified:** 18 tests pass; full Phase 1–3 chain on real fixtures → 27 gaps (boundary/edge), per-field
+gen_A (seeded) + gen_B (gap-filling) + existing/retrieved sets (e.g. `currency` gen_A USD/GBP/INR, gen_B usd/JPY/BRL).
 
 ---
 
