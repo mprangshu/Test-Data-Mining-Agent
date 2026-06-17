@@ -1,0 +1,30 @@
+{
+  "all_fields": [
+    "order_id",
+    "customer_name",
+    "email",
+    "country",
+    "currency",
+    "payment_method",
+    "card_number_masked",
+    "item_count",
+    "order_total",
+    "coupon_code",
+    "order_status",
+    "created_at"
+  ],
+  "reused_fields": [
+    "email",
+    "order_total",
+    "currency",
+    "country"
+  ],
+  "exercised_scenarios": [
+    "valid",
+    "negative"
+  ],
+  "gap_scenario_types": [
+    "boundary",
+    "edge"
+  ]
+}

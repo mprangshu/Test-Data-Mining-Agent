@@ -26,7 +26,7 @@
 |---|---|---|
 | 0 | ✅ Teardown + new `state.py` + deps; green (empty) baseline | — |
 | 1 | ✅ Inputs parsed: `parse` (test cases) + `load_results` (results → signals + seeds) | 0 |
-| 2 | Sample data + stores: `generate_fixtures` seeds Mongo/Chroma/inputs; `mongo_lookup` + `vector_search` | 1 |
+| 2 | ✅ Sample data + stores: `generate_fixtures` seeds Mongo/Chroma/inputs; `mongo_lookup` + `vector_search` | 1 |
 | 3 | Gaps + generation: `coverage_gap` + `generate` (2–3 constraint-valid sets/field) | 2 |
 | 4 | Graph wired + backend `/mine` + `/resume`; pipeline runs to review interrupt; auto-resume in tests → `final_dataset` 🎯 | 3 |
 | 5 | Frontend: two-bucket upload → mine → trace to the review gate | 4 |
@@ -79,17 +79,22 @@ The working v1 lives on the `v1` branch.
 ## Phase 2 — Sample data + data-gathering stores
 *Goal: realistic seed so the demo tells a story; wire the read-only mine of Mongo + Chroma.*
 
-- [ ] Rewrite `scripts/generate_fixtures.py` (pivot §9): seed **MongoDB** (`data/sample_mongo/*.json`
-      or live), **ChromaDB** (offline deterministic embeddings), supporting **result files**
-      (valid pass → seeds; negative/boundary absent/failing → gaps), primary **input files**
-      (`order_flow_tests.csv`, `login_flow_tests.txt`), and a small **golden expectation** file.
-- [ ] `nodes/mongo_lookup.py` — match by test-case id / story key / field overlap; `MONGODB_URI` or
-      local `data/sample_mongo/`. Unreachable/empty → `existing_data=[]` + gap. 🔒 read-only.
-- [ ] `nodes/vector_search.py` — embed fields+story, ChromaDB top-K (K=5, threshold 0.70); reuse the
-      v1 offline embedder. Unreachable/empty → `retrieved_data=[]` + gap.
-- [ ] Unit tests incl. graceful degradation (no Mongo / no Chroma).
+- [x] Rewrote `scripts/generate_fixtures.py` (pivot §9): from `tdm_demo_output.csv` it seeds
+      **MongoDB** (`data/sample_mongo/*.json`), **ChromaDB** (`data/sample_chroma/`, offline
+      deterministic embeddings), supporting **results** (`results/junit.xml` valid-pass + negative-fail,
+      `results/playwright.json` valid-pass; boundary/edge absent → gaps), primary **inputs**
+      (`order_flow_tests.csv`, `login_flow_tests.txt`), and `golden/expectations_v2.json`.
+- [x] Added shared offline embedder `src/test_data_mining/embedding.py` (stable md5 hashing, L2-norm)
+      + a ChromaDB-compatible `DeterministicEmbeddingFunction` (no model download).
+- [x] `nodes/mongo_lookup.py` — field-overlap / test-case-id match; `MONGODB_URI` or local
+      `data/sample_mongo/`. Unreachable/empty → `existing_data=[]` + gap. 🔒 read-only.
+- [x] `nodes/vector_search.py` — embed field names, ChromaDB top-K (K=5) cosine; threshold tuned
+      to **0.40** for the offline embedder (env `CHROMA_THRESHOLD`; ~0.70 with real embeddings).
+      Unreachable/empty → `retrieved_data=[]` + gap.
+- [x] Unit tests incl. graceful degradation (no Mongo / no Chroma) — `test_mongo_lookup`, `test_vector_search`.
 
-**Done when:** with seeded fixtures, `mongo_lookup` returns existing rows and `vector_search` returns similar ones.
+**Done when:** with seeded fixtures, `mongo_lookup` returns existing rows and `vector_search` returns similar ones. ✅
+**Verified:** 14 tests pass; on real fixtures `mongo_lookup` → 2 datasets, `vector_search` → `order_flow` (sim 0.59).
 
 ---
 

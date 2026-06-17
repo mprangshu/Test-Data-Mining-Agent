@@ -6,5 +6,7 @@ venv/
 data/fixtures/
 data/reports/
 data/_uploads/
+data/sample_chroma/
+.certs/
 .pytest_cache/
 *.egg-info/

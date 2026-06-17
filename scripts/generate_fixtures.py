@@ -1,231 +1,203 @@
 #!/usr/bin/env python3
 """
-generate_fixtures.py — Synthetic test-execution data for the Test Data Mining Agent.
+generate_fixtures.py — Seed everything the v2 demo needs (pivot §9).
 
-Why this exists
----------------
-No public dataset (Kaggle CI/CD logs, IDoFT, FlakeFlagger) ships data in the *raw* format
-this agent ingests (JUnit/TestNG XML + Playwright JSON, with pass/fail history across runs)
-AND with a clean ground-truth label of which tests are flaky. So we synthesise it. Because
-we control the generator, we know exactly which tests are flaky/stable/always-failing — that
-labelled ground truth becomes the Phase-4 golden set we score precision/recall against.
+Builds, from the canonical ``tdm_demo_output.csv`` (order-flow schema), a coherent demo where:
+  * MongoDB (local JSON seed) holds the *valid* values for a few fields (so `mongo_lookup`
+    returns real existing data to REUSE),
+  * the supporting result files show *valid* scenarios passing (→ realistic `seed_values`) and
+    *negative* scenarios failing, with *boundary*/*edge* absent (→ `coverage_gaps`),
+  * ChromaDB is seeded so `vector_search` returns similar stored cases.
 
-What it produces (stdlib only — no pip installs needed)
--------------------------------------------------------
-  data/fixtures/run_<NN>/junit/results.xml      JUnit XML per run
-  data/fixtures/run_<NN>/playwright/results.json Playwright JSON per run
-  data/golden/flaky_labels.json                  ground truth: {test_id: "flaky"|"stable"|"always_fail"}
-  data/golden/manifest.json                      run metadata (commit shas, seeds, counts)
+Outputs (all under <repo>/data/):
+  sample_upload/test_cases/order_flow_tests.csv   primary input — field list + scenario types
+  sample_upload/test_cases/login_flow_tests.txt   primary input — Gherkin BDD
+  sample_upload/results/junit.xml                 supporting — valid pass + negative fail
+  sample_upload/results/playwright.json           supporting — valid pass
+  sample_mongo/*.json                             MongoDB seed datasets
+  sample_chroma/                                  ChromaDB persistent store (gitignored)
+  golden/expectations_v2.json                     what tests assert the agent recovers
 
-Test "personas" we seed
-------------------------
-  * stable      — passes ~always (rare infra blip allowed)
-  * flaky       — passes/fails non-deterministically at the SAME commit (the target signal)
-  * always_fail — a real regression (fails every run) — must NOT be labelled flaky
-  * slow        — stable but high duration (feeds suite-health trend)
-
-Usage
------
-  python scripts/generate_fixtures.py                 # defaults: 8 runs, 40 tests
-  python scripts/generate_fixtures.py --runs 12 --tests 60 --seed 7
+stdlib only, except ChromaDB for the vector seed (optional — skipped with a warning if absent).
 """
 from __future__ import annotations
 
-import argparse
+import csv
 import json
 import os
-import random
+import shutil
+import sys
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
 
-# --------------------------------------------------------------------------- #
-# Test catalogue: (test_id, suite, persona, base_duration_sec)
-# --------------------------------------------------------------------------- #
-SUITES = ["auth", "checkout", "search", "profile", "payments"]
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+from test_data_mining.embedding import embed, DeterministicEmbeddingFunction  # noqa: E402
 
-FAILURE_SIGNATURES = {
-    "flaky": [
-        ("TimeoutError: waiting for selector exceeded 5000ms",
-         "  at Page.waitForSelector (pw/page.js:812)\n  at CheckoutTest.run (checkout.spec.ts:44)"),
-        ("AssertionError: expected element to be visible",
-         "  at Assertions.toBeVisible (expect.js:201)\n  at SearchTest.run (search.spec.ts:73)"),
-        ("ConnectionResetError: connection reset by peer",
-         "  at Socket._read (net.js:644)\n  at AuthTest.login (auth.spec.ts:29)"),
-    ],
-    "always_fail": [
-        ("AssertionError: expected status 200 but got 500",
-         "  at ApiClient.assertOk (client.js:90)\n  at PaymentsTest.charge (payments.spec.ts:118)"),
-    ],
-}
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CSV_PATH = os.path.join(REPO, "tdm_demo_output.csv")
+DATA = os.path.join(REPO, "data")
+
+META_COLS = {"scenario_tag", "data_category"}
+# Fields whose VALID values MongoDB already stores (to be reused, not regenerated).
+REUSED_FIELDS = ["email", "order_total", "currency", "country"]
 
 
-def build_catalogue(n_tests: int, rng: random.Random) -> list[dict]:
-    """Create a deterministic-ish catalogue of tests with assigned personas."""
-    catalogue = []
-    # Fixed proportions so the golden set is balanced and realistic.
-    n_flaky = max(3, round(n_tests * 0.15))
-    n_always_fail = max(1, round(n_tests * 0.05))
-    n_slow = max(2, round(n_tests * 0.10))
-    personas = (
-        ["flaky"] * n_flaky
-        + ["always_fail"] * n_always_fail
-        + ["slow"] * n_slow
-    )
-    personas += ["stable"] * (n_tests - len(personas))
-    rng.shuffle(personas)
+def _read_rows() -> tuple[list[str], list[dict]]:
+    with open(CSV_PATH, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        return list(reader.fieldnames or []), list(reader)
 
-    for i, persona in enumerate(personas):
-        suite = SUITES[i % len(SUITES)]
-        test_id = f"com.example.{suite}.{suite.capitalize()}Test#test_case_{i:03d}"
-        base_duration = round(rng.uniform(0.05, 0.9), 3)
-        if persona == "slow":
-            base_duration = round(rng.uniform(4.0, 9.0), 3)
-        catalogue.append(
-            {"test_id": test_id, "suite": suite, "persona": persona, "base_duration": base_duration}
+
+def _data_fields(headers: list[str]) -> list[str]:
+    return [h for h in headers if h not in META_COLS]
+
+
+# ── primary inputs ────────────────────────────────────────────────────
+def _write_test_cases(tc_dir: str) -> None:
+    os.makedirs(tc_dir, exist_ok=True)
+    # The test-case sheet is the canonical CSV itself (headers = required fields; data_category
+    # lists the scenario types). parse() reads it to derive parsed_fields.
+    shutil.copy(CSV_PATH, os.path.join(tc_dir, "order_flow_tests.csv"))
+    with open(os.path.join(tc_dir, "login_flow_tests.txt"), "w", encoding="utf-8") as f:
+        f.write(
+            "Feature: Login\n\n"
+            "  Scenario: Successful login\n"
+            "    Given a registered user with <email> and <password>\n"
+            "    When they submit the login form\n"
+            "    Then they are signed in\n\n"
+            "  Scenario: Invalid password is rejected\n"
+            "    Given a registered user with <email>\n"
+            "    When they submit an invalid <password>\n"
+            "    Then login fails with an error\n\n"
+            "  Scenario: Empty email is rejected (boundary)\n"
+            "    Given an empty <email>\n"
+            "    Then the form shows a required-field error\n"
         )
-    return catalogue
 
 
-def outcome_for(persona: str, rng: random.Random) -> str:
-    """Decide a single run outcome for a test given its persona."""
-    if persona == "always_fail":
-        return "failed"
-    if persona == "flaky":
-        # ~30% fail rate at the same commit — the defining flaky behaviour.
-        return "failed" if rng.random() < 0.30 else "passed"
-    # stable / slow: very rare infra blip (2%) so detectors must tolerate noise.
-    return "failed" if rng.random() < 0.02 else "passed"
+# ── supporting result files ──────────────────────────────────────────
+def _props(parent, row, data_fields):
+    props = ET.SubElement(parent, "properties")
+    ET.SubElement(props, "property", {"name": "scenario_type", "value": row["data_category"]})
+    ET.SubElement(props, "property", {"name": "scenario_tag", "value": row["scenario_tag"]})
+    for fld in data_fields:
+        ET.SubElement(props, "property", {"name": fld, "value": str(row.get(fld, "") or "")})
 
 
-def duration_for(base: float, persona: str, rng: random.Random) -> float:
-    jitter = rng.uniform(-0.1, 0.25) * base
-    return round(max(0.01, base + jitter), 3)
-
-
-# --------------------------------------------------------------------------- #
-# Writers
-# --------------------------------------------------------------------------- #
-def write_junit(path: str, suite_name: str, rows: list[dict], ts: str) -> None:
-    testsuite = ET.Element("testsuite", {
-        "name": suite_name,
-        "tests": str(len(rows)),
-        "failures": str(sum(1 for r in rows if r["outcome"] == "failed")),
-        "skipped": "0",
-        "timestamp": ts,
-    })
-    for r in rows:
-        classname, _, name = r["test_id"].partition("#")
-        case = ET.SubElement(testsuite, "testcase", {
-            "classname": classname,
-            "name": name,
-            "time": f"{r['duration_sec']:.3f}",
-        })
-        if r["outcome"] == "failed":
-            failure = ET.SubElement(case, "failure", {"message": r["message"] or "test failed"})
-            failure.text = r["stack_trace"] or ""
-    tree = ET.ElementTree(testsuite)
+def _write_junit(path: str, passing: list[dict], failing: list[dict], data_fields) -> None:
+    suite = ET.Element("testsuite", {"name": "order_flow",
+                                     "tests": str(len(passing) + len(failing)),
+                                     "failures": str(len(failing))})
+    for row in passing:
+        case = ET.SubElement(suite, "testcase", {"classname": "order_flow", "name": row["scenario_tag"]})
+        _props(case, row, data_fields)
+    for row in failing:
+        case = ET.SubElement(suite, "testcase", {"classname": "order_flow", "name": row["scenario_tag"]})
+        _props(case, row, data_fields)
+        ET.SubElement(case, "failure", {"message": f"{row['scenario_tag']} failed"}).text = "assertion failed"
+    tree = ET.ElementTree(suite)
     ET.indent(tree, space="  ")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tree.write(path, encoding="utf-8", xml_declaration=True)
 
 
-def write_playwright(path: str, rows: list[dict], ts: str, run_id: str) -> None:
-    """Minimal but realistic Playwright JSON reporter shape."""
+def _write_playwright(path: str, passing: list[dict], data_fields) -> None:
     specs = []
-    for r in rows:
-        specs.append({
-            "title": r["test_id"],
-            "ok": r["outcome"] == "passed",
-            "tests": [{
-                "status": "expected" if r["outcome"] == "passed" else "unexpected",
-                "results": [{
-                    "status": r["outcome"],
-                    "duration": int(r["duration_sec"] * 1000),
-                    "error": None if r["outcome"] == "passed"
-                             else {"message": r["message"], "stack": r["stack_trace"]},
-                }],
-            }],
-        })
-    doc = {
-        "config": {"metadata": {"run_id": run_id, "timestamp": ts}},
-        "suites": [{"title": "playwright-suite", "specs": specs}],
-        "stats": {
-            "expected": sum(1 for r in rows if r["outcome"] == "passed"),
-            "unexpected": sum(1 for r in rows if r["outcome"] == "failed"),
-        },
-    }
+    for row in passing:
+        ann = [{"type": "scenario_type", "description": row["data_category"]},
+               {"type": "scenario_tag", "description": row["scenario_tag"]}]
+        ann += [{"type": fld, "description": str(row.get(fld, "") or "")} for fld in data_fields]
+        specs.append({"title": row["scenario_tag"], "annotations": ann,
+                      "tests": [{"results": [{"status": "passed"}]}]})
+    doc = {"config": {"metadata": {}}, "suites": [{"title": "order_flow", "specs": specs}]}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=2)
 
 
-# --------------------------------------------------------------------------- #
-# Main
-# --------------------------------------------------------------------------- #
+# ── MongoDB seed (local JSON) ─────────────────────────────────────────
+def _write_mongo(mongo_dir: str, valid_rows: list[dict]) -> list[dict]:
+    os.makedirs(mongo_dir, exist_ok=True)
+    docs = [
+        {"test_case_id": "order_flow", "label": "order_flow_v1", "tags": ["order", "checkout", "valid"],
+         "fields": {f: [r[f] for r in valid_rows if r.get(f)] for f in REUSED_FIELDS}},
+        {"test_case_id": "customer_profile", "label": "customer_profiles_v1", "tags": ["identity", "valid"],
+         "fields": {"email": [r["email"] for r in valid_rows if r.get("email")],
+                    "customer_name": [r["customer_name"] for r in valid_rows if r.get("customer_name")]}},
+    ]
+    for d in docs:
+        with open(os.path.join(mongo_dir, f"{d['label']}.json"), "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=2)
+    return docs
+
+
+# ── ChromaDB seed ─────────────────────────────────────────────────────
+def _seed_chroma(chroma_dir: str, docs: list[dict]) -> bool:
+    try:
+        import chromadb
+    except Exception as exc:  # optional — demo still works, vector_search just returns []
+        print(f"  (skipped ChromaDB seed: {type(exc).__name__}: {exc})")
+        return False
+    shutil.rmtree(chroma_dir, ignore_errors=True)
+    os.makedirs(chroma_dir, exist_ok=True)
+    client = chromadb.PersistentClient(path=chroma_dir)
+    ef = DeterministicEmbeddingFunction()
+    col = client.create_collection("tdm_cases", metadata={"hnsw:space": "cosine"}, embedding_function=ef)
+    ids, embs, metas, texts = [], [], [], []
+    for d in docs:
+        # Embed the field-name context (label/tags kept in metadata, not the vector) so cosine
+        # reflects field overlap with the query — meaningful under the offline hashed embedder.
+        context = " ".join(d["fields"].keys())
+        ids.append(d["label"])
+        embs.append(embed(context))
+        metas.append({"test_case_id": d["test_case_id"], "label": d["label"],
+                      "fields": json.dumps(d["fields"])})
+        texts.append(context)
+    col.add(ids=ids, embeddings=embs, documents=texts, metadatas=metas)
+    return True
+
+
+# ── main ──────────────────────────────────────────────────────────────
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Generate synthetic test-execution fixtures.")
-    ap.add_argument("--runs", type=int, default=10, help="number of CI runs to simulate")
-    ap.add_argument("--tests", type=int, default=40, help="number of distinct tests")
-    ap.add_argument("--seed", type=int, default=42, help="RNG seed for reproducibility")
-    ap.add_argument("--out", default=None, help="output root (default: <repo>/data)")
-    args = ap.parse_args()
+    if not os.path.exists(CSV_PATH):
+        raise SystemExit(f"Canonical CSV not found: {CSV_PATH}")
+    headers, rows = _read_rows()
+    data_fields = _data_fields(headers)
 
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    out_root = args.out or os.path.join(repo_root, "data")
-    fixtures_dir = os.path.join(out_root, "fixtures")
-    golden_dir = os.path.join(out_root, "golden")
-    os.makedirs(golden_dir, exist_ok=True)
+    by_cat: dict[str, list[dict]] = {}
+    for r in rows:
+        by_cat.setdefault(r["data_category"], []).append(r)
+    valid = by_cat.get("valid", [])
+    negative = by_cat.get("negative", [])
 
-    rng = random.Random(args.seed)
-    catalogue = build_catalogue(args.tests, rng)
+    upload = os.path.join(DATA, "sample_upload")
+    shutil.rmtree(upload, ignore_errors=True)
+    _write_test_cases(os.path.join(upload, "test_cases"))
 
-    # All runs share ONE commit_sha so flaky != real regression is detectable.
-    commit_sha = f"{rng.getrandbits(40):010x}"
-    base_time = datetime(2026, 1, 1, 2, 0, 0, tzinfo=timezone.utc)
+    mid = len(valid) // 2
+    _write_junit(os.path.join(upload, "results", "junit.xml"),
+                 passing=valid[:mid], failing=negative, data_fields=data_fields)
+    _write_playwright(os.path.join(upload, "results", "playwright.json"),
+                      passing=valid[mid:], data_fields=data_fields)
 
-    manifest = {"commit_sha": commit_sha, "seed": args.seed, "runs": [], "n_tests": args.tests}
+    docs = _write_mongo(os.path.join(DATA, "sample_mongo"), valid)
+    chroma_ok = _seed_chroma(os.path.join(DATA, "sample_chroma"), docs)
 
-    for run_idx in range(args.runs):
-        run_id = f"run_{run_idx:02d}"
-        ts = (base_time + timedelta(days=run_idx)).isoformat()
-        rows = []
-        for t in catalogue:
-            outcome = outcome_for(t["persona"], rng)
-            msg, stack = (None, None)
-            if outcome == "failed":
-                bucket = "always_fail" if t["persona"] == "always_fail" else "flaky"
-                msg, stack = rng.choice(FAILURE_SIGNATURES[bucket])
-            rows.append({
-                "test_id": t["test_id"],
-                "outcome": outcome,
-                "duration_sec": duration_for(t["base_duration"], t["persona"], rng),
-                "message": msg,
-                "stack_trace": stack,
-            })
+    golden = {
+        "all_fields": data_fields,
+        "reused_fields": REUSED_FIELDS,                 # mongo_lookup should return these
+        "exercised_scenarios": ["valid", "negative"],   # present in result files
+        "gap_scenario_types": ["boundary", "edge"],     # absent in results → coverage gaps
+    }
+    os.makedirs(os.path.join(DATA, "golden"), exist_ok=True)
+    with open(os.path.join(DATA, "golden", "expectations_v2.json"), "w", encoding="utf-8") as f:
+        json.dump(golden, f, indent=2)
 
-        # Split across the two source formats (half each) to exercise both parsers.
-        mid = len(rows) // 2
-        write_junit(os.path.join(fixtures_dir, run_id, "junit", "results.xml"),
-                    "junit-suite", rows[:mid], ts)
-        write_playwright(os.path.join(fixtures_dir, run_id, "playwright", "results.json"),
-                         rows[mid:], ts, run_id)
-        manifest["runs"].append({"run_id": run_id, "timestamp": ts, "tests": len(rows)})
-
-    # Ground-truth golden labels (persona -> label the agent should recover)
-    label_map = {"flaky": "flaky", "always_fail": "always_fail", "stable": "stable", "slow": "stable"}
-    golden = {t["test_id"]: label_map[t["persona"]] for t in catalogue}
-    with open(os.path.join(golden_dir, "flaky_labels.json"), "w", encoding="utf-8") as f:
-        json.dump(golden, f, indent=2, sort_keys=True)
-    with open(os.path.join(golden_dir, "manifest.json"), "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
-
-    n_flaky = sum(1 for v in golden.values() if v == "flaky")
-    n_fail = sum(1 for v in golden.values() if v == "always_fail")
-    print(f"Generated {args.runs} runs x {args.tests} tests at commit {commit_sha}")
-    print(f"  fixtures -> {fixtures_dir}")
-    print(f"  golden   -> {golden_dir}/flaky_labels.json")
-    print(f"  ground truth: {n_flaky} flaky, {n_fail} always-fail, "
-          f"{args.tests - n_flaky - n_fail} stable")
+    print(f"Generated v2 fixtures from {os.path.basename(CSV_PATH)}:")
+    print(f"  test cases   -> {upload}/test_cases ({len(data_fields)} fields)")
+    print(f"  results      -> {upload}/results (valid pass: {len(valid)}, negative fail: {len(negative)})")
+    print(f"  MongoDB seed -> {DATA}/sample_mongo ({len(docs)} datasets, reused fields {REUSED_FIELDS})")
+    print(f"  ChromaDB     -> {'seeded' if chroma_ok else 'SKIPPED'} at {DATA}/sample_chroma")
+    print(f"  golden       -> {DATA}/golden/expectations_v2.json (gaps: boundary, edge)")
 
 
 if __name__ == "__main__":

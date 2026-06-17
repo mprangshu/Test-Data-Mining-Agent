@@ -59,9 +59,11 @@ Supporting docs do double duty: **fill gaps** (scenario types never exercised) a
    `coverage_gap` are pure/deterministic and run **before** `generate` (the LLM step).
 4. **GRACEFUL DEGRADATION.** Any store unreachable or input malformed → empty result + a `gaps`
    note, **never crash**. No MongoDB data at all → pure-LLM generation path (expected first run).
-5. **LLM VIA HUB ROUTER.** No standalone API keys in this repo. LLM use is an **injection seam** on
-   `generate` and `synthesise` (`node(state, llm=None)`); offline default = deterministic
-   faker-style generation seeded by real values.
+5. **LLM VIA GEMINI.** LLM use (candidate-set generation, synthesis narrative) goes through
+   **Google Gemini** using the `google-genai` SDK, via the seam in `llm.py` (`get_llm()`). The API
+   key comes from env **`GEMINI_API_KEY`** (model from `GEMINI_MODEL`, default `gemini-2.5-flash`) —
+   **never hard-coded or committed** (use a gitignored `.env`). When no key is set the nodes fall
+   back to deterministic, seeded generation, so everything runs offline/in tests without a key.
 6. **ANTI-HALLUCINATION.** Every generated value must satisfy the field's `constraints`
    (e.g. currency ∈ ISO-4217, email format) **before** it becomes a candidate set — regenerate on failure.
 
@@ -127,7 +129,8 @@ synthesise one from the column list above** (noted in BUILD-PLAN) so fixtures st
 
 - **Structured log prefixes:** `NODE_ENTER` / `NODE_EXIT`, `WS_EVENT`, `LLM_CALL` / `LLM_RESP`,
   `NODE_ERROR`. No `KG_SIGNAL_*`.
-- **LLM access** via the Hub Python LLM router (Anthropic default) — never a standalone key.
+- **LLM access** via Google Gemini (`google-genai`) through `llm.py` `get_llm()`; key from env
+  `GEMINI_API_KEY`. No key → deterministic fallback. Never commit keys (use a gitignored `.env`).
 - **Checkpointer:** `MemorySaver` for the MVP (required for `interrupt()`/resume).
 - **Parsing:** stdlib `xml.etree` for JUnit; native JSON for Playwright; `openpyxl` for xlsx;
   stdlib `csv` for csv; lightweight Gherkin parse for `.txt`. `lxml` available for richer XML.

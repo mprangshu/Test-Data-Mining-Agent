@@ -1,0 +1,28 @@
+{
+  "test_case_id": "customer_profile",
+  "label": "customer_profiles_v1",
+  "tags": [
+    "identity",
+    "valid"
+  ],
+  "fields": {
+    "email": [
+      "user0001@example.com",
+      "user0002@example.com",
+      "user0003@example.com",
+      "user0004@example.com",
+      "user0005@example.com",
+      "user0017@example.com",
+      "user0020@example.com"
+    ],
+    "customer_name": [
+      "User_0001",
+      "User_0002",
+      "User_0003",
+      "User_0004",
+      "User_0005",
+      "User_0017",
+      "User_0020"
+    ]
+  }
+}

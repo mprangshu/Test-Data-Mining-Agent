@@ -1,0 +1,292 @@
+{
+  "config": {
+    "metadata": {}
+  },
+  "suites": [
+    {
+      "title": "order_flow",
+      "specs": [
+        {
+          "title": "typical_order",
+          "annotations": [
+            {
+              "type": "scenario_type",
+              "description": "valid"
+            },
+            {
+              "type": "scenario_tag",
+              "description": "typical_order"
+            },
+            {
+              "type": "order_id",
+              "description": "ORD-100004"
+            },
+            {
+              "type": "customer_name",
+              "description": "User_0004"
+            },
+            {
+              "type": "email",
+              "description": "user0004@example.com"
+            },
+            {
+              "type": "country",
+              "description": "DE"
+            },
+            {
+              "type": "currency",
+              "description": "EUR"
+            },
+            {
+              "type": "payment_method",
+              "description": "credit_card"
+            },
+            {
+              "type": "card_number_masked",
+              "description": "****-****-****-5678"
+            },
+            {
+              "type": "item_count",
+              "description": "1"
+            },
+            {
+              "type": "order_total",
+              "description": "19.95"
+            },
+            {
+              "type": "coupon_code",
+              "description": ""
+            },
+            {
+              "type": "order_status",
+              "description": "completed"
+            },
+            {
+              "type": "created_at",
+              "description": "2026-01-05T16:03:47Z"
+            }
+          ],
+          "tests": [
+            {
+              "results": [
+                {
+                  "status": "passed"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "typical_order",
+          "annotations": [
+            {
+              "type": "scenario_type",
+              "description": "valid"
+            },
+            {
+              "type": "scenario_tag",
+              "description": "typical_order"
+            },
+            {
+              "type": "order_id",
+              "description": "ORD-100005"
+            },
+            {
+              "type": "customer_name",
+              "description": "User_0005"
+            },
+            {
+              "type": "email",
+              "description": "user0005@example.com"
+            },
+            {
+              "type": "country",
+              "description": "AU"
+            },
+            {
+              "type": "currency",
+              "description": "AUD"
+            },
+            {
+              "type": "payment_method",
+              "description": "debit_card"
+            },
+            {
+              "type": "card_number_masked",
+              "description": "****-****-****-9012"
+            },
+            {
+              "type": "item_count",
+              "description": "4"
+            },
+            {
+              "type": "order_total",
+              "description": "210.75"
+            },
+            {
+              "type": "coupon_code",
+              "description": "SAVE20"
+            },
+            {
+              "type": "order_status",
+              "description": "completed"
+            },
+            {
+              "type": "created_at",
+              "description": "2026-01-06T08:30:00Z"
+            }
+          ],
+          "tests": [
+            {
+              "results": [
+                {
+                  "status": "passed"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "multi_item_with_coupon",
+          "annotations": [
+            {
+              "type": "scenario_type",
+              "description": "valid"
+            },
+            {
+              "type": "scenario_tag",
+              "description": "multi_item_with_coupon"
+            },
+            {
+              "type": "order_id",
+              "description": "ORD-100017"
+            },
+            {
+              "type": "customer_name",
+              "description": "User_0017"
+            },
+            {
+              "type": "email",
+              "description": "user0017@example.com"
+            },
+            {
+              "type": "country",
+              "description": "GB"
+            },
+            {
+              "type": "currency",
+              "description": "GBP"
+            },
+            {
+              "type": "payment_method",
+              "description": "credit_card"
+            },
+            {
+              "type": "card_number_masked",
+              "description": "****-****-****-9090"
+            },
+            {
+              "type": "item_count",
+              "description": "7"
+            },
+            {
+              "type": "order_total",
+              "description": "512.18"
+            },
+            {
+              "type": "coupon_code",
+              "description": "FREESHIP"
+            },
+            {
+              "type": "order_status",
+              "description": "completed"
+            },
+            {
+              "type": "created_at",
+              "description": "2026-01-12T18:45:30Z"
+            }
+          ],
+          "tests": [
+            {
+              "results": [
+                {
+                  "status": "passed"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "late_night_order",
+          "annotations": [
+            {
+              "type": "scenario_type",
+              "description": "valid"
+            },
+            {
+              "type": "scenario_tag",
+              "description": "late_night_order"
+            },
+            {
+              "type": "order_id",
+              "description": "ORD-100020"
+            },
+            {
+              "type": "customer_name",
+              "description": "User_0020"
+            },
+            {
+              "type": "email",
+              "description": "user0020@example.com"
+            },
+            {
+              "type": "country",
+              "description": "US"
+            },
+            {
+              "type": "currency",
+              "description": "USD"
+            },
+            {
+              "type": "payment_method",
+              "description": "credit_card"
+            },
+            {
+              "type": "card_number_masked",
+              "description": "****-****-****-4343"
+            },
+            {
+              "type": "item_count",
+              "description": "1"
+            },
+            {
+              "type": "order_total",
+              "description": "1234.56"
+            },
+            {
+              "type": "coupon_code",
+              "description": ""
+            },
+            {
+              "type": "order_status",
+              "description": "completed"
+            },
+            {
+              "type": "created_at",
+              "description": "2026-01-13T21:59:59Z"
+            }
+          ],
+          "tests": [
+            {
+              "results": [
+                {
+                  "status": "passed"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "test_case_id": "order_flow",
+  "label": "order_flow_v1",
+  "tags": [
+    "order",
+    "checkout",
+    "valid"
+  ],
+  "fields": {
+    "email": [
+      "user0001@example.com",
+      "user0002@example.com",
+      "user0003@example.com",
+      "user0004@example.com",
+      "user0005@example.com",
+      "user0017@example.com",
+      "user0020@example.com"
+    ],
+    "order_total": [
+      "149.99",
+      "58.40",
+      "2899.00",
+      "19.95",
+      "210.75",
+      "512.18",
+      "1234.56"
+    ],
+    "currency": [
+      "USD",
+      "GBP",
+      "INR",
+      "EUR",
+      "AUD",
+      "GBP",
+      "USD"
+    ],
+    "country": [
+      "US",
+      "GB",
+      "IN",
+      "DE",
+      "AU",
+      "GB",
+      "US"
+    ]
+  }
+}

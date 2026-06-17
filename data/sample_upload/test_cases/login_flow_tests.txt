@@ -1,0 +1,15 @@
+Feature: Login
+
+  Scenario: Successful login
+    Given a registered user with <email> and <password>
+    When they submit the login form
+    Then they are signed in
+
+  Scenario: Invalid password is rejected
+    Given a registered user with <email>
+    When they submit an invalid <password>
+    Then login fails with an error
+
+  Scenario: Empty email is rejected (boundary)
+    Given an empty <email>
+    Then the form shows a required-field error

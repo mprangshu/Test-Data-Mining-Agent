@@ -1,0 +1,171 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="order_flow" tests="9" failures="6">
+  <testcase classname="order_flow" name="typical_order">
+    <properties>
+      <property name="scenario_type" value="valid" />
+      <property name="scenario_tag" value="typical_order" />
+      <property name="order_id" value="ORD-100001" />
+      <property name="customer_name" value="User_0001" />
+      <property name="email" value="user0001@example.com" />
+      <property name="country" value="US" />
+      <property name="currency" value="USD" />
+      <property name="payment_method" value="credit_card" />
+      <property name="card_number_masked" value="****-****-****-1234" />
+      <property name="item_count" value="3" />
+      <property name="order_total" value="149.99" />
+      <property name="coupon_code" value="" />
+      <property name="order_status" value="completed" />
+      <property name="created_at" value="2026-01-04T09:12:33Z" />
+    </properties>
+  </testcase>
+  <testcase classname="order_flow" name="typical_order">
+    <properties>
+      <property name="scenario_type" value="valid" />
+      <property name="scenario_tag" value="typical_order" />
+      <property name="order_id" value="ORD-100002" />
+      <property name="customer_name" value="User_0002" />
+      <property name="email" value="user0002@example.com" />
+      <property name="country" value="GB" />
+      <property name="currency" value="GBP" />
+      <property name="payment_method" value="paypal" />
+      <property name="card_number_masked" value="" />
+      <property name="item_count" value="2" />
+      <property name="order_total" value="58.40" />
+      <property name="coupon_code" value="WELCOME10" />
+      <property name="order_status" value="completed" />
+      <property name="created_at" value="2026-01-04T10:45:01Z" />
+    </properties>
+  </testcase>
+  <testcase classname="order_flow" name="typical_order">
+    <properties>
+      <property name="scenario_type" value="valid" />
+      <property name="scenario_tag" value="typical_order" />
+      <property name="order_id" value="ORD-100003" />
+      <property name="customer_name" value="User_0003" />
+      <property name="email" value="user0003@example.com" />
+      <property name="country" value="IN" />
+      <property name="currency" value="INR" />
+      <property name="payment_method" value="upi" />
+      <property name="card_number_masked" value="" />
+      <property name="item_count" value="5" />
+      <property name="order_total" value="2899.00" />
+      <property name="coupon_code" value="" />
+      <property name="order_status" value="completed" />
+      <property name="created_at" value="2026-01-05T14:22:10Z" />
+    </properties>
+  </testcase>
+  <testcase classname="order_flow" name="invalid_currency_code">
+    <properties>
+      <property name="scenario_type" value="negative" />
+      <property name="scenario_tag" value="invalid_currency_code" />
+      <property name="order_id" value="ORD-100011" />
+      <property name="customer_name" value="User_0011" />
+      <property name="email" value="user0011@example.com" />
+      <property name="country" value="FR" />
+      <property name="currency" value="XXX" />
+      <property name="payment_method" value="credit_card" />
+      <property name="card_number_masked" value="****-****-****-1010" />
+      <property name="item_count" value="2" />
+      <property name="order_total" value="75.00" />
+      <property name="coupon_code" value="" />
+      <property name="order_status" value="failed" />
+      <property name="created_at" value="2026-01-09T12:34:56Z" />
+    </properties>
+    <failure message="invalid_currency_code failed">assertion failed</failure>
+  </testcase>
+  <testcase classname="order_flow" name="missing_email">
+    <properties>
+      <property name="scenario_type" value="negative" />
+      <property name="scenario_tag" value="missing_email" />
+      <property name="order_id" value="ORD-100012" />
+      <property name="customer_name" value="User_0012" />
+      <property name="email" value="" />
+      <property name="country" value="US" />
+      <property name="currency" value="USD" />
+      <property name="payment_method" value="credit_card" />
+      <property name="card_number_masked" value="****-****-****-1212" />
+      <property name="item_count" value="1" />
+      <property name="order_total" value="29.99" />
+      <property name="coupon_code" value="" />
+      <property name="order_status" value="failed" />
+      <property name="created_at" value="2026-01-09T13:00:00Z" />
+    </properties>
+    <failure message="missing_email failed">assertion failed</failure>
+  </testcase>
+  <testcase classname="order_flow" name="negative_item_count">
+    <properties>
+      <property name="scenario_type" value="negative" />
+      <property name="scenario_tag" value="negative_item_count" />
+      <property name="order_id" value="ORD-100013" />
+      <property name="customer_name" value="User_0013" />
+      <property name="email" value="user0013@example.com" />
+      <property name="country" value="US" />
+      <property name="currency" value="USD" />
+      <property name="payment_method" value="credit_card" />
+      <property name="card_number_masked" value="****-****-****-3434" />
+      <property name="item_count" value="-2" />
+      <property name="order_total" value="50.00" />
+      <property name="coupon_code" value="" />
+      <property name="order_status" value="error" />
+      <property name="created_at" value="2026-01-10T15:20:00Z" />
+    </properties>
+    <failure message="negative_item_count failed">assertion failed</failure>
+  </testcase>
+  <testcase classname="order_flow" name="negative_order_total">
+    <properties>
+      <property name="scenario_type" value="negative" />
+      <property name="scenario_tag" value="negative_order_total" />
+      <property name="order_id" value="ORD-100014" />
+      <property name="customer_name" value="User_0014" />
+      <property name="email" value="user0014@example.com" />
+      <property name="country" value="US" />
+      <property name="currency" value="USD" />
+      <property name="payment_method" value="credit_card" />
+      <property name="card_number_masked" value="****-****-****-5656" />
+      <property name="item_count" value="3" />
+      <property name="order_total" value="-15.00" />
+      <property name="coupon_code" value="" />
+      <property name="order_status" value="error" />
+      <property name="created_at" value="2026-01-10T16:10:00Z" />
+    </properties>
+    <failure message="negative_order_total failed">assertion failed</failure>
+  </testcase>
+  <testcase classname="order_flow" name="missing_country">
+    <properties>
+      <property name="scenario_type" value="negative" />
+      <property name="scenario_tag" value="missing_country" />
+      <property name="order_id" value="ORD-100015" />
+      <property name="customer_name" value="User_0015" />
+      <property name="email" value="user0015@example.com" />
+      <property name="country" value="" />
+      <property name="currency" value="USD" />
+      <property name="payment_method" value="credit_card" />
+      <property name="card_number_masked" value="****-****-****-7878" />
+      <property name="item_count" value="2" />
+      <property name="order_total" value="42.50" />
+      <property name="coupon_code" value="" />
+      <property name="order_status" value="failed" />
+      <property name="created_at" value="2026-01-11T10:05:00Z" />
+    </properties>
+    <failure message="missing_country failed">assertion failed</failure>
+  </testcase>
+  <testcase classname="order_flow" name="expired_coupon">
+    <properties>
+      <property name="scenario_type" value="negative" />
+      <property name="scenario_tag" value="expired_coupon" />
+      <property name="order_id" value="ORD-100016" />
+      <property name="customer_name" value="User_0016" />
+      <property name="email" value="user0016@example.com" />
+      <property name="country" value="US" />
+      <property name="currency" value="USD" />
+      <property name="payment_method" value="gift_card" />
+      <property name="card_number_masked" value="" />
+      <property name="item_count" value="1" />
+      <property name="order_total" value="33.33" />
+      <property name="coupon_code" value="EXPIRED5" />
+      <property name="order_status" value="declined" />
+      <property name="created_at" value="2026-01-11T11:30:00Z" />
+    </properties>
+    <failure message="expired_coupon failed">assertion failed</failure>
+  </testcase>
+</testsuite>
