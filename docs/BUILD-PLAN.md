@@ -28,7 +28,7 @@
 | 1 | ✅ Inputs parsed: `parse` (test cases) + `load_results` (results → signals + seeds) | 0 |
 | 2 | ✅ Sample data + stores: `generate_fixtures` seeds Mongo/Chroma/inputs; `mongo_lookup` + `vector_search` | 1 |
 | 3 | ✅ Gaps + generation: `coverage_gap` + `generate` (2–3 constraint-valid sets/field) | 2 |
-| 4 | Graph wired + backend `/mine` + `/resume`; pipeline runs to review interrupt; auto-resume in tests → `final_dataset` 🎯 | 3 |
+| 4 | ✅ Graph wired + backend `/mine` + `/resume`; pipeline runs to review interrupt; resume → `final_dataset` 🎯 | 3 |
 | 5 | Frontend: two-bucket upload → mine → trace to the review gate | 4 |
 | 6 | Set-based HITL: `review` interrupt + `ReviewGate` radios + `/resume` → CSV report + download 🎯 | 5 |
 | 7 | Save-back loop: `persist` (Mongo+Chroma) + `PersistGate`; re-run reuses saved data 🎯 | 6 |
@@ -118,17 +118,20 @@ gen_A (seeded) + gen_B (gap-filling) + existing/retrieved sets (e.g. `currency` 
 ## Phase 4 — Graph wiring + backend `/mine` + `/resume`  🎯
 *Goal: the pipeline runs to the (always-on) review interrupt; a programmatic resume completes it.*
 
-- [ ] `graph.py` — `parse → [load_results | mongo_lookup | vector_search] → coverage_gap → generate
-      → review → synthesise → persist`. `review` always interrupts (L2-only, no skip path).
-- [ ] `nodes/synthesise.py` — assemble `final_dataset` rows from the chosen set per field; align by
-      scenario; resolve cross-field constraints; write `report` (totals, source mix, coverage map, gaps).
-- [ ] `backend/app.py` — `POST /mine` (two buckets `test_cases[]` + `results[]`, multipart/JSON) streams
-      NDJSON to the `interrupt`; `POST /resume` (review_selections) streams to result; `/health`.
-      Reuse v1 streaming + guards (size caps, allow-list, cleanup).
-- [ ] Verify (test/curl): pipeline streams to the interrupt; a resume with auto-selected sets (widest
-      scenario coverage) yields `final_dataset` rows shaped like the canonical CSV.
+- [x] `graph.py` — `parse → load_results → mongo_lookup → vector_search → coverage_gap → generate
+      → review → synthesise → persist`; `review` always interrupts (L2-only). **Data-gather wired
+      sequentially** (not parallel) — a staggered fan-in into `generate` re-ran upstream nodes on
+      resume; single-parent chain keeps interrupt/resume clean. Also added `nodes/review.py`
+      (interrupt payload + `auto_selections` for non-UI resume) ahead of schedule.
+- [x] `nodes/synthesise.py` — assembles `final_dataset` rows from the chosen set per field; report
+      (row count, source mix, gaps-filled fields, recommendations). Optional Gemini narrative seam.
+- [x] `backend/app.py` — `POST /mine` (two buckets `test_cases[]` + `results[]` + pasted `text`)
+      streams NDJSON to the `interrupt`; `POST /resume` (`review_selections` JSON) streams to the
+      `result`; `/health`. Upload guards (size caps, per-bucket allow-list, cleanup).
+- [x] Verified: graph CLI + backend tests — `/mine` streams to the gate, `/resume` returns a dataset
+      (6 rows on the sample). 23 tests pass.
 
-**Done when:** a `/mine` run streams to the review gate and a `/resume` returns a generated dataset.
+**Done when:** a `/mine` run streams to the review gate and a `/resume` returns a generated dataset. ✅
 
 ---
 

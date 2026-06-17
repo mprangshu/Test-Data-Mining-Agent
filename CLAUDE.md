@@ -72,13 +72,16 @@ Supporting docs do double duty: **fill gaps** (scenario types never exercised) a
 ## LangGraph topology (pivot §3)
 
 ```
-parse → [ load_results | mongo_lookup | vector_search ]  (parallel after parse)
-      → coverage_gap → generate → review (HITL set-based, ALWAYS) → synthesise → persist
+parse → load_results → mongo_lookup → vector_search → coverage_gap
+      → generate → review (HITL set-based, ALWAYS) → synthesise → persist
 ```
 
-`coverage_gap` depends on `load_results`. `review` **always runs** via `interrupt()` →
-`Command(resume=…)` (this agent is L2-only — there is no skip path). `persist` runs only when
-the persist gate is `save=true`.
+The data-gather nodes (`load_results`, `mongo_lookup`, `vector_search`) are logically independent
+and could fan out in parallel, but they're wired **sequentially**: a staggered multi-parent
+fan-in into `generate` re-runs upstream nodes when `review` interrupts on resume. A single-parent
+chain keeps HITL interrupt/resume clean, and the data volumes make the sequential cost negligible.
+`review` **always runs** via `interrupt()` → `Command(resume=…)` (L2-only — no skip path).
+`persist` runs only when the persist gate is `save=true`.
 
 ## Node responsibilities (pivot §3 / §10)
 

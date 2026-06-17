@@ -1,72 +1,55 @@
 """
-graph.py — LangGraph StateGraph wiring for the Test Data Mining Agent.
+graph.py — LangGraph StateGraph wiring for the Test Data Mining Agent (v2).
 
-Topology (spec §2.2):
+Topology (pivot §3):
 
-    ingest -> validate -> [ flaky_detect | coverage_gap | failure_clustering ]  (parallel)
-           -> suite_health -> (review if L2) -> synthesis -> persist
+    parse → [ load_results | mongo_lookup | vector_search ]   (parallel after parse)
+          → coverage_gap → generate → review (HITL, ALWAYS) → synthesise → persist
 
-Conditional routing: the `review` HITL node runs only under L2; L1/L3 route straight to
-`synthesis`.
-
-This module requires `langgraph` (see requirements.txt). The nodes it wires are already
-importable; the LLM-dependent ones are placeholders until built out (see docs/ROADMAP.md).
+`coverage_gap` depends on `load_results`; `generate` fans in from coverage_gap + mongo_lookup +
+vector_search. `review` always interrupts (L2-only) — resume via `Command(resume=...)`.
 """
 from __future__ import annotations
 
 import argparse
 
-from .state import AgentState, AutonomyLevel, initial_state
-from .nodes.ingest import ingest
-from .nodes.flaky_detect import flaky_detect
-from .nodes.failure_clustering import failure_clustering
-from .nodes.synthesis import synthesis
+from .state import AgentState, initial_state
+from .nodes.parse import parse
+from .nodes.load_results import load_results
+from .nodes.mongo_lookup import mongo_lookup
+from .nodes.vector_search import vector_search
+from .nodes.coverage_gap import coverage_gap
+from .nodes.generate import generate
+from .nodes.review import review, auto_selections
+from .nodes.synthesise import synthesise
 from .nodes.persist import persist
-from .nodes.stubs import (
-    validate,
-    coverage_gap,
-    suite_health,
-    review,
-)
-
-
-def _route_after_health(state: AgentState) -> str:
-    """L2 goes through the human review gate; L1/L3 skip straight to synthesis."""
-    return "review" if state.get("autonomy_level") == AutonomyLevel.L2_SUPERVISED else "synthesis"
 
 
 def build_graph(checkpointer=None):
-    """Construct and compile the agent graph.
-
-    Imported lazily so the rest of the package (parsers, detectors, tests) works without
-    langgraph installed.
-    """
+    """Construct and compile the agent graph (lazy langgraph import)."""
     from langgraph.graph import StateGraph, START, END
 
     g = StateGraph(AgentState)
-    g.add_node("ingest", ingest)
-    g.add_node("validate", validate)
-    g.add_node("flaky_detect", flaky_detect)
-    g.add_node("coverage_gap", coverage_gap)
-    g.add_node("failure_clustering", failure_clustering)
-    g.add_node("suite_health", suite_health)
-    g.add_node("review", review)
-    g.add_node("synthesis", synthesis)
-    g.add_node("persist", persist)
+    for name, fn in [
+        ("parse", parse), ("load_results", load_results), ("mongo_lookup", mongo_lookup),
+        ("vector_search", vector_search), ("coverage_gap", coverage_gap), ("generate", generate),
+        ("review", review), ("synthesise", synthesise), ("persist", persist),
+    ]:
+        g.add_node(name, fn)
 
-    g.add_edge(START, "ingest")
-    g.add_edge("ingest", "validate")
-
-    # Fan out to the three deterministic/vector detectors in parallel.
-    for detector in ("flaky_detect", "coverage_gap", "failure_clustering"):
-        g.add_edge("validate", detector)
-        g.add_edge(detector, "suite_health")   # fan-in barrier
-
-    # Conditional HITL gate.
-    g.add_conditional_edges("suite_health", _route_after_health,
-                            {"review": "review", "synthesis": "synthesis"})
-    g.add_edge("review", "synthesis")
-    g.add_edge("synthesis", "persist")
+    # Sequential data-gather. (The nodes are independent and could fan out in parallel, but a
+    # staggered multi-parent fan-in into `generate` interacts badly with the downstream
+    # `interrupt()` on resume — re-running upstream nodes. A single-parent chain keeps the HITL
+    # interrupt/resume clean; the data volumes here make the sequential cost negligible.)
+    g.add_edge(START, "parse")
+    g.add_edge("parse", "load_results")
+    g.add_edge("load_results", "mongo_lookup")
+    g.add_edge("mongo_lookup", "vector_search")
+    g.add_edge("vector_search", "coverage_gap")
+    g.add_edge("coverage_gap", "generate")
+    g.add_edge("generate", "review")          # HITL gate — always interrupts
+    g.add_edge("review", "synthesise")
+    g.add_edge("synthesise", "persist")
     g.add_edge("persist", END)
 
     if checkpointer is None:
@@ -76,17 +59,30 @@ def build_graph(checkpointer=None):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Run the Test Data Mining Agent over fixtures.")
-    ap.add_argument("--input", default="data/fixtures", help="path to run_* fixtures")
-    ap.add_argument("--autonomy", default="L2", choices=["L1", "L2", "L3"])
+    ap = argparse.ArgumentParser(description="Run the Test Data Mining Agent (v2) over inputs.")
+    ap.add_argument("--input", default="data/sample_upload",
+                    help="dir with test_cases/ (and optional results/)")
     args = ap.parse_args()
 
-    state = initial_state(args.input, autonomy_level=AutonomyLevel(args.autonomy))
+    from langgraph.types import Command
+
     graph = build_graph()
     config = {"configurable": {"thread_id": "local-run"}}
-    result = graph.invoke(state, config=config)
+    graph.invoke(initial_state(args.input), config=config)
+
+    # The graph pauses at the review gate; for a non-interactive CLI run, auto-select and resume.
+    snap = graph.get_state(config)
+    if snap.next:
+        cands = snap.values.get("candidate_sets", [])
+        print(f"\n[review gate] auto-selecting widest-coverage set for {len(cands)} fields…")
+        graph.invoke(Command(resume={"review_selections": auto_selections(cands)}), config=config)
+
+    final = graph.get_state(config).values
+    report = final.get("report") or {}
     print("\n=== REPORT ===")
-    print(result.get("report"))
+    print(report.get("summary"))
+    print("recommendations:", report.get("recommendations"))
+    print("rows:", report.get("row_count"), "columns:", report.get("columns"))
 
 
 if __name__ == "__main__":
