@@ -29,7 +29,7 @@
 | 2 | ✅ Sample data + stores: `generate_fixtures` seeds Mongo/Chroma/inputs; `mongo_lookup` + `vector_search` | 1 |
 | 3 | ✅ Gaps + generation: `coverage_gap` + `generate` (2–3 constraint-valid sets/field) | 2 |
 | 4 | ✅ Graph wired + backend `/mine` + `/resume`; pipeline runs to review interrupt; resume → `final_dataset` 🎯 | 3 |
-| 5 | Frontend: two-bucket upload → mine → trace to the review gate | 4 |
+| 5 | ✅ Frontend: two-bucket upload → mine → trace to the review gate | 4 |
 | 6 | Set-based HITL: `review` interrupt + `ReviewGate` radios + `/resume` → CSV report + download 🎯 | 5 |
 | 7 | Save-back loop: `persist` (Mongo+Chroma) + `PersistGate`; re-run reuses saved data 🎯 | 6 |
 | 8 | Tests (unit/integration/adversarial) + polish + demo dry-run 🎯 | all |
@@ -139,14 +139,18 @@ gen_A (seeded) + gen_B (gap-filling) + existing/retrieved sets (e.g. `currency` 
 *Goal: the clickable front half — upload, stream the trace to the review gate. (No autonomy
 selector — this agent is L2-only.)*
 
-- [ ] `InputPanel.jsx` — two file groups: **Test cases** (.xlsx/.csv/.json/.txt) and **Test results
-      (optional)** (.xml/.json); keep multi-file accumulate/dedupe. Remove the autonomy selector.
-- [ ] `TracePanel.jsx` — new node names (parse · load_results · mongo_lookup · vector_search ·
-      coverage_gap · generate · review · synthesise · persist).
-- [ ] `ReportView.jsx` — CSV-oriented dataset preview + coverage-gap section + source-mix summary.
-- [ ] `api.js` (`/mine`, `/resume`, `/persist`), `download.js` (CSV primary, JSON secondary).
+- [x] `InputPanel.jsx` — two buckets: **Test cases** (.xlsx/.csv/.json/.txt) + **Test results
+      (optional)** (.xml/.json), multi-file accumulate/dedupe + per-file remove, optional paste box.
+      No autonomy selector (L2-only).
+- [x] `TracePanel.jsx` — reused (node-agnostic); now shows the v2 node names from the stream.
+- [x] `ReportView.jsx` — CSV-oriented dataset preview (table), source-mix + gaps stats, recommendations,
+      **Download CSV / JSON**.
+- [x] `api.js` (`mine` + `resume`, NDJSON reader), `download.js` (CSV primary, JSON secondary).
+- [x] `App.jsx` — orchestrates mine → trace → review-gate banner (interactive ReviewGate is Phase 6)
+      → report. Builds clean (`npm run build`).
 
-**Done when:** upload test cases (+ results) → Analyse → trace streams to the review interrupt.
+**Done when:** upload test cases (+ results) → Mine → trace streams to the review interrupt. ✅
+**Note:** the run completes in the browser once Phase 6 adds the interactive ReviewGate + resume.
 
 ---
 
