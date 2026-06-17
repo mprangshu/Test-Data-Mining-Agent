@@ -1,146 +1,151 @@
 """
-state.py — The shared state contract for the Test Data Mining Agent.
+state.py — AgentState for the Test Data Mining Agent (v2: test-data generation).
 
-Every LangGraph node receives an ``AgentState`` and returns a dict of the keys it
-updated. This module is the single source of truth for what flows through the graph.
+The single source of truth for what flows through the graph. Every node receives an
+``AgentState`` and returns a dict of only the keys it updates. See docs/TDM-PIVOT-v2.md §4.
 
-Design rules (see CLAUDE.md):
-  * Deterministic detectors populate `flaky_findings`, `coverage_findings`,
-    `failure_clusters`, and `suite_health` independently and in parallel.
-  * The LLM only writes `cluster_labels` (inside failure_clustering) and the final `report`.
-  * `errors` / `gaps` collect graceful-degradation notes — nodes append, never crash.
+Pipeline that fills these keys:
+    parse → [load_results | mongo_lookup | vector_search] → coverage_gap
+          → generate → review (HITL) → synthesise → persist
+
+Autonomy: this agent runs at ONE level — **L2 · Supervised**. The HITL review gate ALWAYS
+runs (no L1/L3 toggle). The only other human decision is the explicit save gate in `persist`.
+
+Invariants (CLAUDE.md): read-before-write on MongoDB · no Neo4j · deterministic-before-LLM ·
+graceful degradation (nodes append to `gaps`/`errors`, never crash) · anti-hallucination.
 """
 from __future__ import annotations
 
 import operator
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Optional, TypedDict
 
 
-# --------------------------------------------------------------------------- #
-# Enums / config
-# --------------------------------------------------------------------------- #
-class AutonomyLevel(str, Enum):
-    L1_ASSISTIVE = "L1"      # one-shot, no review gate
-    L2_SUPERVISED = "L2"     # full pipeline + HITL review before persist (DEFAULT)
-    L3_GOAL_DRIVEN = "L3"    # full pipeline, persists without review
+ScenarioType = Literal["valid", "boundary", "negative", "edge"]
 
 
-TestOutcome = Literal["passed", "failed", "skipped", "error"]
-
-
-# --------------------------------------------------------------------------- #
-# Normalised data records (ingest writes these)
-# --------------------------------------------------------------------------- #
+# ── Primary input: parsed test cases ──────────────────────────────────
 @dataclass
-class TestResult:
-    """One test outcome from one run, normalised across all source formats."""
-    __test__ = False                  # not a pytest test class (name starts with "Test")
-    test_id: str                      # fully-qualified test name (stable key)
-    suite: str
-    outcome: TestOutcome
-    duration_sec: float
-    run_id: str
-    commit_sha: str                   # used to group "same-version" runs for flaky detection
-    timestamp: str                    # ISO 8601
-    message: Optional[str] = None     # failure/error message (raw)
-    stack_trace: Optional[str] = None
-    source_format: str = "junit"      # "junit" | "playwright" | ...
+class ParsedField:
+    name: str                          # "email"
+    category: str                      # "Identity" | "PII" | "Financial" | ...
+    constraints: list[str]             # ["required", "ISO-4217"] etc.
+    source_test_ids: list[str]         # which test cases need this field
+    scenario_types: list[str]          # which scenarios reference it
+
+
+# ── Supporting input: signals from result files ───────────────────────
+@dataclass
+class ResultSignal:
+    test_case_id: str
+    scenario_tag: str                  # e.g. "typical_order", "missing_email"
+    scenario_type: str                 # valid | boundary | negative | edge
+    outcome: Literal["passed", "failed", "skipped", "error"]
+    fields_exercised: list[str]        # field names this test touched
 
 
 @dataclass
-class FlakyFinding:
-    test_id: str
-    flakiness_score: float            # 0.0 (stable) .. 1.0 (maximally flaky)
-    runs_observed: int
-    pass_count: int
-    fail_count: int
-    last_failure_ts: Optional[str]
-    verdict: Literal["flaky", "stable", "insufficient_history"]
+class SeedValue:
+    field_name: str
+    example_values: list[Any]          # real values from PASSING runs (few-shot seeds)
+
+
+# ── Gathered data ─────────────────────────────────────────────────────
+@dataclass
+class ExistingRecord:
+    test_case_id: str
+    label: str
+    tags: list[str]
+    fields: dict[str, list[Any]]       # field → stored values
 
 
 @dataclass
-class CoverageFinding:
-    module: str
-    coverage_pct: float
-    status: Literal["ok", "low", "missing", "declining"]
+class RetrievedRecord:
+    test_case_id: str
+    similarity_score: float
+    fields: dict[str, list[Any]]
 
 
 @dataclass
-class FailureCluster:
-    cluster_id: str
-    signature: str                    # normalised error signature
-    count: int
-    representative_trace: str
-    label: Optional[str] = None       # LLM-generated; None until synthesis/labelling runs
+class CoverageGap:
+    field_name: str
+    scenario_type: str                 # the scenario that was never exercised
+    reason: str                        # "no negative-case value tested for email"
+
+
+# ── Candidate sets (what generate produces, what HITL chooses from) ───
+@dataclass
+class CandidateSet:
+    set_id: str                        # "gen_A" | "gen_B" | "existing" | "retrieved"
+    source: Literal["generated", "existing", "retrieved"]
+    values: list[Any]                  # the actual values in this set
+    scenario_coverage: list[str]       # which scenario types this set covers
+    note: str                          # short rationale ("boundary-heavy variant")
 
 
 @dataclass
-class SuiteHealth:
-    pass_rate: float
-    mean_duration_sec: float
-    flake_rate: float
-    window_runs: int
+class FieldCandidates:
+    field_name: str
+    category: str
+    sets: list[CandidateSet]           # 2–3 generated + maybe existing + retrieved
+    gap_flagged: bool                  # True if this field had a coverage gap
 
 
-# --------------------------------------------------------------------------- #
-# The graph state
-# --------------------------------------------------------------------------- #
+# ── HITL decision (set-level, per field) ──────────────────────────────
+@dataclass
+class ReviewSelection:
+    field_name: str
+    include: bool
+    chosen_set_id: Optional[str]       # which CandidateSet the analyst kept
+    custom_values: Optional[list[Any]] = None   # if analyst typed their own
+
+
+# ── The graph state ───────────────────────────────────────────────────
 class AgentState(TypedDict, total=False):
-    # --- inputs / config ---
-    input_path: str                          # where source files live
-    autonomy_level: AutonomyLevel
-    min_runs_for_flaky: int                  # N — minimum history for flaky detection
-    flaky_score_cutoff: float                # score >= cutoff => "flaky"
-    min_minority_fails: int                  # minority outcome must appear >= this many times
+    input_path: str
 
-    # --- ingest / validate ---
-    raw_results: list[TestResult]            # normalised test outcomes across all runs
-    validation_ok: bool
+    parsed_fields: list[ParsedField]            # parse
+    result_signals: list[ResultSignal]          # load_results
+    seed_values: list[SeedValue]                # load_results
+    existing_data: list[ExistingRecord]         # mongo_lookup
+    retrieved_data: list[RetrievedRecord]       # vector_search
+    coverage_gaps: list[CoverageGap]            # coverage_gap
+    candidate_sets: list[FieldCandidates]       # generate
 
-    # --- parallel detectors ---
-    flaky_findings: list[FlakyFinding]
-    coverage_findings: list[CoverageFinding]
-    failure_clusters: list[FailureCluster]
-    suite_health: Optional[SuiteHealth]
+    review_selections: list[ReviewSelection]    # review (HITL)
 
-    # --- HITL ---
-    review_decisions: dict[str, Any]         # analyst filter/confirm choices (L2)
+    final_dataset: list[dict[str, Any]]         # synthesise
+    report: Optional[dict[str, Any]]            # synthesise
 
-    # --- synthesis / output ---
-    report: Optional[dict[str, Any]]         # final prioritised report (persisted)
+    persist_decision: Optional[bool]            # /persist
+    persist_label: Optional[str]
+    persist_tags: Optional[list[str]]
+    persist_receipt: Optional[dict[str, Any]]
 
-    # --- graceful degradation (append-only; never crash) ---
-    # operator.add reducers make every node's return APPEND to these lists instead of
-    # overwriting, and let the parallel detector fan-out write them concurrently without
-    # a LangGraph InvalidUpdateError. A node that has nothing to add returns [] (a no-op).
-    gaps: Annotated[list[str], operator.add]     # explicit "we couldn't compute X" notes
-    errors: Annotated[list[str], operator.add]   # NODE_ERROR notes
+    # graceful degradation — operator.add reducers so notes accumulate across nodes
+    # (and parallel data-gather nodes can write them without an InvalidUpdateError).
+    gaps: Annotated[list[str], operator.add]
+    errors: Annotated[list[str], operator.add]
 
 
-def initial_state(
-    input_path: str,
-    autonomy_level: AutonomyLevel = AutonomyLevel.L2_SUPERVISED,
-    min_runs_for_flaky: int = 5,
-    flaky_score_cutoff: float = 0.2,
-    min_minority_fails: int = 2,
-) -> AgentState:
-    """Build a fresh state with sane defaults from the spec."""
+def initial_state(input_path: str) -> AgentState:
+    """Build a fresh state with v2 defaults (always L2 · HITL)."""
     return AgentState(
         input_path=input_path,
-        autonomy_level=autonomy_level,
-        min_runs_for_flaky=min_runs_for_flaky,
-        flaky_score_cutoff=flaky_score_cutoff,
-        min_minority_fails=min_minority_fails,
-        raw_results=[],
-        validation_ok=False,
-        flaky_findings=[],
-        coverage_findings=[],
-        failure_clusters=[],
-        suite_health=None,
-        review_decisions={},
+        parsed_fields=[],
+        result_signals=[],
+        seed_values=[],
+        existing_data=[],
+        retrieved_data=[],
+        coverage_gaps=[],
+        candidate_sets=[],
+        review_selections=[],
+        final_dataset=[],
         report=None,
+        persist_decision=None,
+        persist_label=None,
+        persist_tags=None,
+        persist_receipt=None,
         gaps=[],
         errors=[],
     )

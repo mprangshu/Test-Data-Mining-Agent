@@ -24,13 +24,13 @@
 
 | Phase | Outcome | Depends on |
 |---|---|---|
-| 0 | Teardown + new `state.py` + deps; green (empty) baseline | — |
-| 1 | Inputs parsed: `parse` (test cases) + `load_results` (results → signals + seeds) | 0 |
+| 0 | ✅ Teardown + new `state.py` + deps; green (empty) baseline | — |
+| 1 | ✅ Inputs parsed: `parse` (test cases) + `load_results` (results → signals + seeds) | 0 |
 | 2 | Sample data + stores: `generate_fixtures` seeds Mongo/Chroma/inputs; `mongo_lookup` + `vector_search` | 1 |
 | 3 | Gaps + generation: `coverage_gap` + `generate` (2–3 constraint-valid sets/field) | 2 |
-| 4 | Graph wired + backend `/mine`; L1 end-to-end → `final_dataset` 🎯 | 3 |
-| 5 | Frontend: two-bucket upload → mine → CSV report + download (L1) 🎯 | 4 |
-| 6 | Set-based HITL: `review` interrupt + `ReviewGate` radios + `/resume` (L2) 🎯 | 5 |
+| 4 | Graph wired + backend `/mine` + `/resume`; pipeline runs to review interrupt; auto-resume in tests → `final_dataset` 🎯 | 3 |
+| 5 | Frontend: two-bucket upload → mine → trace to the review gate | 4 |
+| 6 | Set-based HITL: `review` interrupt + `ReviewGate` radios + `/resume` → CSV report + download 🎯 | 5 |
 | 7 | Save-back loop: `persist` (Mongo+Chroma) + `PersistGate`; re-run reuses saved data 🎯 | 6 |
 | 8 | Tests (unit/integration/adversarial) + polish + demo dry-run 🎯 | all |
 
@@ -39,34 +39,40 @@
 ## Phase 0 — Teardown & new contract
 *Goal: clear v1's analysis nodes, lay down the v2 state schema, keep the repo importable/green.*
 
-- [ ] Delete v1 files (pivot §6): `nodes/flaky_detect.py`, `nodes/failure_clustering.py`,
-      `nodes/synthesis.py`, `nodes/stubs.py`, `scripts/score_golden.py`,
-      `tests/test_flaky_detect.py`, `tests/test_validate.py`, `tests/test_synthesis_persist.py`,
-      `tests/test_failure_clustering.py`. (Keep `data/sample_upload/*` for reference; will be reshaped.)
-- [ ] Rewrite `src/test_data_mining/state.py` to the v2 schema (pivot §4) — `ParsedField`,
+- [x] Deleted v1 files (pivot §6): `nodes/flaky_detect.py`, `nodes/failure_clustering.py`,
+      `nodes/synthesis.py`, `nodes/stubs.py`, `scripts/score_golden.py`, and the v1 tests
+      (`test_flaky_detect`, `test_validate`, `test_synthesis_persist`, `test_failure_clustering`,
+      plus `test_backend`/`test_integration`/`test_adversarial` — they import deleted modules and
+      are rewritten for the new pipeline later). Kept `data/sample_upload/*` (reshaped in Phase 2).
+- [x] Rewrote `src/test_data_mining/state.py` to the v2 schema (pivot §4) — `ParsedField`,
       `ResultSignal`, `SeedValue`, `ExistingRecord`, `RetrievedRecord`, `CoverageGap`,
-      `CandidateSet`, `FieldCandidates`, `ReviewSelection`, new `AgentState`. Keep `gaps`/`errors`
-      accumulate-reducers.
-- [ ] `requirements.txt`: add `openpyxl`; keep `lxml`, langgraph, chromadb, pymongo, fastapi, uvicorn, pytest.
-- [ ] Decide the canonical schema: use `tdm_demo_output.csv` if present, else synthesise from the
-      §9 column list (order-flow). Note the decision here.
-- [ ] Baseline: `python -c "import test_data_mining.state"` imports; `pytest` collects (0 tests OK).
+      `CandidateSet`, `FieldCandidates`, `ReviewSelection`, new `AgentState`; `gaps`/`errors`
+      accumulate-reducers kept; added `initial_state(input_path, autonomy_level=L2)`.
+- [x] `requirements.txt`: added `openpyxl`, removed `junitparser`, kept `lxml` + the rest.
+- [x] Canonical schema: `tdm_demo_output.csv` is in the repo (root) — fixtures build on it.
+- [x] Baseline verified: `import test_data_mining.state` OK (18-key state, L1/L2/L3);
+      `pytest` → "no tests ran" (exit 5, expected — v1 tests gone, v2 tests pending).
 
-**Done when:** old nodes removed, new `state.py` imports cleanly, deps updated.
+**Done when:** old nodes removed, new `state.py` imports cleanly, deps updated. ✅
+**Note:** `graph.py`, `backend/app.py`, `nodes/ingest.py`, `nodes/persist.py` still reference the
+old shape and are intentionally non-functional now — they're rewritten/split in Phases 1, 4, 7.
+The working v1 lives on the `v1` branch.
 
 ---
 
 ## Phase 1 — Inputs (`parse` + `load_results`)
 *Goal: turn the two input buckets into structured state. Pure, unit-testable, no stores/LLM.*
 
-- [ ] `nodes/parse.py` — read `test_cases/`: xlsx/csv → columns=fields (+ `scenario_type` if present);
-      json → schema detect; txt → Gherkin `<placeholders>` + Given/When/Then → fields + scenarios.
-      → `parsed_fields`. Never crash → `gaps`.
-- [ ] `nodes/load_results.py` — parse JUnit XML + Playwright JSON → `result_signals` (scenario,
-      outcome, fields touched) + `seed_values` (real values from **passing** runs). No results → empty + gap.
-- [ ] Unit tests for both (xlsx/csv/json/txt parse; passing-run seed extraction; empty/malformed → gaps).
+- [x] `nodes/parse.py` — reads `test_cases/` (csv/xlsx → headers=fields, scenario/id columns excluded;
+      json → schema detect; txt → Gherkin `<placeholders>` + scenario keywords). Category/constraint
+      inference per field. → `parsed_fields`. Never crashes → `gaps`.
+- [x] `nodes/load_results.py` — parses JUnit XML (`<property>`) + Playwright JSON (`annotations`) →
+      `result_signals` (tag, type, outcome, fields exercised) + `seed_values` (PASSING-run values only).
+      No `results/` dir → empty + gap (unseeded).
+- [x] Unit tests for both (csv/json/txt parse, category inference, passing-only seeds, malformed/empty → gaps).
 
-**Done when:** given the sample inputs, `parse` lists the fields and `load_results` yields signals + seeds.
+**Done when:** given the sample inputs, `parse` lists the fields and `load_results` yields signals + seeds. ✅
+**Verified:** 8 tests pass.
 
 ---
 
@@ -102,48 +108,49 @@
 
 ---
 
-## Phase 4 — Graph wiring + backend `/mine`  🎯
-*Goal: the deterministic pipeline runs end-to-end and the API returns a dataset (L1, no HITL yet).*
+## Phase 4 — Graph wiring + backend `/mine` + `/resume`  🎯
+*Goal: the pipeline runs to the (always-on) review interrupt; a programmatic resume completes it.*
 
 - [ ] `graph.py` — `parse → [load_results | mongo_lookup | vector_search] → coverage_gap → generate
-      → (review if L2) → synthesise → persist`; L1/L3 skip review (L1 auto-picks widest-coverage set).
-- [ ] `nodes/synthesise.py` (interim auto-select for L1) — assemble `final_dataset` rows from chosen
-      sets; align by scenario; resolve cross-field constraints; write `report` (totals, source mix,
-      coverage map, gaps).
-- [ ] `backend/app.py` — `POST /mine` (two buckets `test_cases[]` + `results[]`, multipart/JSON),
-      stream NDJSON node events; `/health`. Reuse v1 streaming + guards (size caps, allow-list, cleanup).
-- [ ] Verify (CLI + curl): sample inputs → `final_dataset` rows shaped like the canonical CSV.
+      → review → synthesise → persist`. `review` always interrupts (L2-only, no skip path).
+- [ ] `nodes/synthesise.py` — assemble `final_dataset` rows from the chosen set per field; align by
+      scenario; resolve cross-field constraints; write `report` (totals, source mix, coverage map, gaps).
+- [ ] `backend/app.py` — `POST /mine` (two buckets `test_cases[]` + `results[]`, multipart/JSON) streams
+      NDJSON to the `interrupt`; `POST /resume` (review_selections) streams to result; `/health`.
+      Reuse v1 streaming + guards (size caps, allow-list, cleanup).
+- [ ] Verify (test/curl): pipeline streams to the interrupt; a resume with auto-selected sets (widest
+      scenario coverage) yields `final_dataset` rows shaped like the canonical CSV.
 
-**Done when:** an L1 `/mine` run streams the trace and returns a generated dataset.
+**Done when:** a `/mine` run streams to the review gate and a `/resume` returns a generated dataset.
 
 ---
 
-## Phase 5 — Frontend core (upload → mine → CSV)  🎯
-*Goal: the clickable loop at L1.*
+## Phase 5 — Frontend core (upload → mine → trace)
+*Goal: the clickable front half — upload, stream the trace to the review gate. (No autonomy
+selector — this agent is L2-only.)*
 
 - [ ] `InputPanel.jsx` — two file groups: **Test cases** (.xlsx/.csv/.json/.txt) and **Test results
-      (optional)** (.xml/.json); keep multi-file accumulate/dedupe.
+      (optional)** (.xml/.json); keep multi-file accumulate/dedupe. Remove the autonomy selector.
 - [ ] `TracePanel.jsx` — new node names (parse · load_results · mongo_lookup · vector_search ·
       coverage_gap · generate · review · synthesise · persist).
 - [ ] `ReportView.jsx` — CSV-oriented dataset preview + coverage-gap section + source-mix summary.
 - [ ] `api.js` (`/mine`, `/resume`, `/persist`), `download.js` (CSV primary, JSON secondary).
 
-**Done when:** upload test cases (+ results) → Analyse → see generated rows → download CSV (L1).
+**Done when:** upload test cases (+ results) → Analyse → trace streams to the review interrupt.
 
 ---
 
-## Phase 6 — Set-based HITL review gate (L2)  🎯
-*Goal: the defining v2 interaction — pick one value set per field.*
+## Phase 6 — Set-based HITL review gate  🎯
+*Goal: the defining v2 interaction — pick one value set per field — completing the clickable loop.*
 
 - [ ] `nodes/review.py` — build the per-field interrupt payload (pivot §5): each field with its
       2–3 sets (+ existing/retrieved), `gap_flagged`; `interrupt(payload)`; map resumed selections
-      → `ReviewSelection`. Skipped at L1/L3.
-- [ ] Backend `/resume` — `{session_id, review_selections}` → `Command(resume=…)` → stream to result.
-- [ ] `ReviewGate.jsx` (rewrite) — per-field **radio** sets (mutually exclusive), ⚠ gap badge,
-      include checkbox, "+ Add custom field", "Generate Final Dataset".
-- [ ] `synthesise` honours chosen sets; 🔒 verify L1/L3 skip the gate, only L2 pauses.
+      → `ReviewSelection`. (Always runs — L2-only.)
+- [ ] `ReviewGate.jsx` — per-field **radio** sets (mutually exclusive), ⚠ gap badge, include
+      checkbox, "+ Add custom field", "Generate Final Dataset" → `/resume`.
+- [ ] Wire the frontend resume path so selections drive `synthesise`; render the CSV report + download.
 
-**Done when:** an L2 run pauses, the analyst picks sets per field, and the dataset reflects the choices.
+**Done when:** a run pauses at the gate, the analyst picks sets per field, and the downloaded CSV reflects the choices.
 
 ---
 
@@ -161,7 +168,7 @@
 ---
 
 ## Phase 8 — Tests, polish, demo dry-run  🎯
-- [ ] Unit tests per node; integration test (full pipeline per autonomy; L2 interrupt/resume; persist loop).
+- [ ] Unit tests per node; integration test (full pipeline; review interrupt/resume; persist loop).
 - [ ] Adversarial: empty MongoDB (LLM-only path), no result files (unseeded), malformed inputs, no Chroma.
 - [ ] One-command startup + README refresh; rehearse the pivot §13 demo story end-to-end.
 

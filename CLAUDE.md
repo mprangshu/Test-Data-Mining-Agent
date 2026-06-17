@@ -23,7 +23,7 @@ value sets per field** in a human-in-the-loop gate. The chosen sets are assemble
 
 - **Agent ID:** `test-data-mining` (unchanged)
 - **Architecture:** L2 · multi-node LangGraph `StateGraph` (gather → generate → review → synthesise → persist)
-- **Default autonomy:** L2 · Supervised (set-selection HITL + persist gate)
+- **Autonomy:** L2 · Supervised **only** — the set-selection HITL gate **always runs** (no L1/L3 toggle); the only other human decision is the explicit save gate in `persist`
 - **Output:** rows of test data (**CSV**), not a quality report.
 - **Language:** Python 3.11+
 
@@ -71,12 +71,12 @@ Supporting docs do double duty: **fill gaps** (scenario types never exercised) a
 
 ```
 parse → [ load_results | mongo_lookup | vector_search ]  (parallel after parse)
-      → coverage_gap → generate → review (HITL set-based, L2 only) → synthesise → persist
+      → coverage_gap → generate → review (HITL set-based, ALWAYS) → synthesise → persist
 ```
 
-`coverage_gap` depends on `load_results`. `review` is **skipped under L1/L3** (L1 auto-picks the
-set with the widest scenario coverage) and **active under L2** via `interrupt()` → `Command(resume=…)`.
-`persist` runs only when the persist gate is `save=true`.
+`coverage_gap` depends on `load_results`. `review` **always runs** via `interrupt()` →
+`Command(resume=…)` (this agent is L2-only — there is no skip path). `persist` runs only when
+the persist gate is `save=true`.
 
 ## Node responsibilities (pivot §3 / §10)
 
@@ -88,7 +88,7 @@ set with the widest scenario coverage) and **active under L2** via `interrupt()`
 | `vector_search` | vector (ChromaDB) | Embed fields+story; pull top-K similar stored datasets |
 | `coverage_gap` | deterministic | `required fields × {valid,boundary,negative,edge}` minus what results exercised |
 | `generate` | LLM (seam) | Per field: 2–3 candidate value **sets** (valid / gap-filling / edge), seeded + constraint-valid |
-| `review` | HITL (L2) | Pause; analyst picks one set per field (or excludes); resume drives synthesise |
+| `review` | HITL (always) | Pause; analyst picks one set per field (or excludes); resume drives synthesise |
 | `synthesise` | deterministic + LLM | Assemble final rows from chosen sets; resolve cross-field constraints; write report |
 | `persist` | deterministic (gated) | If `save=true`: write dataset to MongoDB + upsert ChromaDB. No Neo4j, no KG signals |
 

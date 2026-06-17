@@ -2,9 +2,10 @@
 langgraph>=0.2.0
 langchain-core>=0.3.0
 
-# --- Parsing (ingest node) ---
-# stdlib xml.etree is used in the reference parser; these enable richer/robust parsing.
-junitparser>=3.1.0
+# --- Parsing ---
+# Primary inputs: openpyxl (xlsx test-case sheets); stdlib csv/json; lightweight Gherkin for .txt.
+# Supporting inputs: stdlib xml.etree for JUnit XML, native JSON for Playwright (lxml for richer XML).
+openpyxl>=3.1.0
 lxml>=5.0.0
 
 # --- Failure clustering (spec §2.6 — vector DB, NOT a graph DB) ---
