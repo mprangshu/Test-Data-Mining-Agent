@@ -30,7 +30,7 @@
 | 3 | ✅ Gaps + generation: `coverage_gap` + `generate` (2–3 constraint-valid sets/field) | 2 |
 | 4 | ✅ Graph wired + backend `/mine` + `/resume`; pipeline runs to review interrupt; resume → `final_dataset` 🎯 | 3 |
 | 5 | ✅ Frontend: two-bucket upload → mine → trace to the review gate | 4 |
-| 6 | Set-based HITL: `review` interrupt + `ReviewGate` radios + `/resume` → CSV report + download 🎯 | 5 |
+| 6 | ✅ Set-based HITL: `review` interrupt + `ReviewGate` radios + `/resume` → CSV report + download 🎯 | 5 |
 | 7 | Save-back loop: `persist` (Mongo+Chroma) + `PersistGate`; re-run reuses saved data 🎯 | 6 |
 | 8 | Tests (unit/integration/adversarial) + polish + demo dry-run 🎯 | all |
 
@@ -157,14 +157,15 @@ selector — this agent is L2-only.)*
 ## Phase 6 — Set-based HITL review gate  🎯
 *Goal: the defining v2 interaction — pick one value set per field — completing the clickable loop.*
 
-- [ ] `nodes/review.py` — build the per-field interrupt payload (pivot §5): each field with its
-      2–3 sets (+ existing/retrieved), `gap_flagged`; `interrupt(payload)`; map resumed selections
-      → `ReviewSelection`. (Always runs — L2-only.)
-- [ ] `ReviewGate.jsx` — per-field **radio** sets (mutually exclusive), ⚠ gap badge, include
-      checkbox, "+ Add custom field", "Generate Final Dataset" → `/resume`.
-- [ ] Wire the frontend resume path so selections drive `synthesise`; render the CSV report + download.
+- [x] `nodes/review.py` — per-field interrupt payload + selection mapping (done in Phase 4).
+- [x] `ReviewGate.jsx` — per-field **radio** sets (mutually exclusive) with values preview, ⚠ gap
+      badge, include checkbox, **Custom** values option, "Generate Final Dataset" → `/resume`.
+- [x] `App.jsx` resume path: selections → `/resume` → trace continues → `ReportView` renders the
+      dataset; **Download CSV/JSON**.
 
-**Done when:** a run pauses at the gate, the analyst picks sets per field, and the downloaded CSV reflects the choices.
+**Done when:** a run pauses at the gate, the analyst picks sets per field, and the downloaded CSV reflects the choices. ✅
+**Verified:** realistic end-to-end over the ASGI app — mixed picks (email→existing, order_total→gen_B
+boundary, coupon_code excluded) → 6 rows × 12 fields, source mix existing 8% / generated 92%. 23 tests pass; build clean.
 
 ---
 

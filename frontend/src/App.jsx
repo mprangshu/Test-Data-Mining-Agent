@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import InputPanel from "./components/InputPanel.jsx";
 import TracePanel from "./components/TracePanel.jsx";
+import ReviewGate from "./components/ReviewGate.jsx";
 import ReportView from "./components/ReportView.jsx";
-import { mine } from "./api.js";
+import { mine, resume } from "./api.js";
 
 export default function App() {
   const [testCases, setTestCases] = useState([]);
@@ -30,6 +31,19 @@ export default function App() {
       await mine({ testCases, results, text, format }, onEvent);
     } catch (e) {
       setError(e.message || "Mining failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitReview = async (selections) => {
+    const { session } = review;
+    setReview(null);
+    setLoading(true);
+    try {
+      await resume(session, selections, onEvent);
+    } catch (e) {
+      setError(e.message || "Resume failed");
     } finally {
       setLoading(false);
     }
@@ -67,15 +81,7 @@ export default function App() {
       <TracePanel trace={trace} running={loading && !review} />
 
       {review && !result && (
-        <section className="bg-amber-50 rounded-xl border border-amber-200 p-4 my-4">
-          <h2 className="text-sm font-semibold text-amber-800 uppercase tracking-wide">
-            ⏸ Review gate — {review.payload?.fields?.length ?? 0} fields ready
-          </h2>
-          <p className="text-xs text-amber-700 mt-1">
-            The agent paused for set-based review. Interactive selection (pick one value set per field)
-            arrives in the next step; the dataset is assembled after you confirm.
-          </p>
-        </section>
+        <ReviewGate payload={review.payload} onSubmit={submitReview} busy={loading} />
       )}
 
       <ReportView result={result} />
