@@ -17,7 +17,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from ..embedding import DeterministicEmbeddingFunction, embed
+from ..embedding import context_text, embed_text, get_embedding_function
 from ..state import AgentState
 
 _REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -48,20 +48,27 @@ def _fields_from_rows(rows: list[dict]) -> dict[str, list]:
     return out
 
 
-def _upsert_chroma(label: str, fields: dict, gaps: list[str]) -> bool:
+def _rows_from_dataset(rows: list[dict]) -> list[dict]:
+    """Row-aligned records restricted to data fields (drop scenario/meta columns)."""
+    return [{k: v for k, v in r.items() if k not in _META_COLS} for r in rows]
+
+
+def _upsert_chroma(label: str, fields: dict, rows: list[dict], tags: list[str], gaps: list[str]) -> bool:
     try:
         import chromadb
 
         client = chromadb.PersistentClient(path=_chroma_path())
-        ef = DeterministicEmbeddingFunction()
+        ef = get_embedding_function()
         try:
             col = client.get_collection("tdm_cases", embedding_function=ef)
         except Exception:
             col = client.create_collection("tdm_cases", metadata={"hnsw:space": "cosine"},
                                            embedding_function=ef)
-        ctx = " ".join(fields.keys())
-        col.upsert(ids=[label], embeddings=[embed(ctx)], documents=[ctx],
-                   metadatas=[{"test_case_id": label, "label": label, "fields": json.dumps(fields)}])
+        # Same descriptive context as the seeder, so saved cases are retrievable next run.
+        ctx = context_text(fields, tags=tags, title=label)
+        col.upsert(ids=[label], embeddings=[embed_text(ctx)], documents=[ctx],
+                   metadatas=[{"test_case_id": label, "label": label,
+                               "fields": json.dumps(fields), "rows": json.dumps(rows)}])
         return True
     except Exception as exc:
         gaps.append(f"persist: ChromaDB upsert skipped ({type(exc).__name__})")
@@ -71,9 +78,10 @@ def _upsert_chroma(label: str, fields: dict, gaps: list[str]) -> bool:
 def write_dataset(final_dataset: list[dict], label: str, tags: list[str], report=None) -> dict:
     """Write the dataset to MongoDB (or local seed) + upsert ChromaDB. Returns a receipt."""
     fields = _fields_from_rows(final_dataset or [])
+    rows = _rows_from_dataset(final_dataset or [])
     doc = {
         "test_case_id": label, "label": label, "tags": tags or [],
-        "fields": fields, "row_count": len(final_dataset or []),
+        "fields": fields, "rows": rows, "row_count": len(final_dataset or []),
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
     gaps: list[str] = []
@@ -98,7 +106,7 @@ def write_dataset(final_dataset: list[dict], label: str, tags: list[str], report
             json.dump(doc, f, indent=2)
         location = path
 
-    chroma_ok = _upsert_chroma(label, fields, gaps)
+    chroma_ok = _upsert_chroma(label, fields, rows, tags or [], gaps)
     return {"label": label, "rows": doc["row_count"], "fields": list(fields),
             "location": location, "chroma_indexed": chroma_ok, "gaps": gaps}
 

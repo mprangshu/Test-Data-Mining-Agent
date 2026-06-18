@@ -31,13 +31,18 @@ import sys
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
-from test_data_mining.embedding import embed, DeterministicEmbeddingFunction  # noqa: E402
+from test_data_mining.embedding import (                                     # noqa: E402
+    context_text, embed_text, get_embedding_function, active_embedder_name,
+)
+from test_data_mining.nodes.parse import _infer                              # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_CSV = os.path.join(REPO, "tdm_demo_output.csv")
 DATA = os.path.join(REPO, "data")
 
 META_COLS = {"scenario_tag", "data_category"}
+# Fixed seed timestamp so regenerating the fixtures is deterministic (no git churn / test flakiness).
+SEED_TS = "2026-01-15T10:00:00Z"
 # Preferred fields to pre-store in MongoDB (reused, not regenerated) — used when present in the
 # source; otherwise we fall back to the first few data columns. NEVER a hardcoded schema.
 _PREFERRED_REUSE = ["email", "order_total", "currency", "country"]
@@ -123,21 +128,81 @@ def _write_playwright(path: str, passing: list[dict], data_fields) -> None:
 
 
 # ── MongoDB seed (local JSON) ─────────────────────────────────────────
-def _write_mongo(mongo_dir: str, valid_rows: list[dict], reused_fields: list[str]) -> list[dict]:
+def _dedupe(values: list) -> list:
+    return list(dict.fromkeys(values))
+
+
+def _dataset_doc(*, test_case_id, label, title, description, tags,
+                 field_names, all_columns, valid_rows, related) -> dict:
+    """A rich, reusable dataset document. The envelope is **universal** (every dataset carries the
+    same metadata regardless of schema); the content is **specific to a test case** (its id, title,
+    the scenario tags it was mined from, per-field constraints, provenance). `mongo_lookup` only
+    needs `test_case_id`/`label`/`tags`/`fields`; the rest powers the UI (source/coverage/lineage)
+    and downstream grounding without hardcoding any column name."""
+    fields = {f: _dedupe([r[f] for r in valid_rows if r.get(f)]) for f in field_names}
+    fields = {f: v for f, v in fields.items() if v}                 # drop fields with no values
+    # Row-aligned records (coherent) — the actual reusable rows, restricted to the stored fields.
+    rows = [{f: r.get(f, "") for f in fields} for r in valid_rows]
+    return {
+        # ── identity (test-case specific) ──
+        "test_case_id": test_case_id,
+        "label": label,
+        "title": title,
+        "description": description,
+        "tags": tags,
+        "domain": tags[0] if tags else "general",
+        # ── provenance (the UI's 3-way source tag) ──
+        "provenance": "fetched",                                    # fetched = from MongoDB
+        "source": {"store": "mongodb", "collection": "test_data_mining_datasets",
+                   "origin": "passing_runs", "ingested_from": ["junit", "playwright"]},
+        # ── schema + constraints (universal envelope) ──
+        "schema": {"columns": all_columns, "key_fields": list(fields.keys()),
+                   "field_count": len(fields), "primary_key": (all_columns[0] if all_columns else None)},
+        "constraints": {f: _infer(f)[1] for f in fields},
+        # ── coverage + lineage ──
+        "scenario_coverage": {"valid": len(valid_rows), "boundary": 0, "negative": 0, "edge": 0},
+        "record_count": max((len(v) for v in fields.values()), default=0),
+        "related_test_cases": related,
+        # ── versioning ──
+        "version": 1,
+        "created_at": SEED_TS,
+        "updated_at": SEED_TS,
+        # ── the reusable values (what mongo_lookup returns) ──
+        "fields": fields,                # column-oriented (matching / aggregation)
+        "rows": rows,                    # row-aligned (coherent reuse + provenance)
+    }
+
+
+def _write_mongo(mongo_dir: str, valid_rows: list[dict], reused_fields: list[str],
+                 data_fields: list[str]) -> list[dict]:
     os.makedirs(mongo_dir, exist_ok=True)
+    # Test-case references this dataset was mined from (unique scenario tags → TC ids).
+    related = sorted({f"TC-{r['scenario_tag']}" for r in valid_rows if r.get("scenario_tag")})
+
     docs = [
-        {"test_case_id": "order_flow", "label": "order_flow_v1", "tags": ["order", "checkout", "valid"],
-         "fields": {f: [r[f] for r in valid_rows if r.get(f)] for f in reused_fields}},
+        _dataset_doc(
+            test_case_id="order_flow", label="order_flow_v1",
+            title="Order Checkout Flow — reusable valid dataset",
+            description="Valid order-checkout records mined from passing runs; reusable as fetched "
+                        "seed data to ground generation of new order rows.",
+            tags=["order", "checkout", "valid"],
+            field_names=data_fields,                                # store ALL valid columns (rich)
+            all_columns=data_fields, valid_rows=valid_rows, related=related),
     ]
-    # Optional second dataset built only from identity-ish fields that actually exist (no hardcoding).
+    # Optional second dataset — identity-ish fields that actually exist (no hardcoding).
     identity = [f for f in ("email", "customer_name", "username", "name") if any(r.get(f) for r in valid_rows)]
     if identity:
-        docs.append(
-            {"test_case_id": "customer_profile", "label": "customer_profiles_v1", "tags": ["identity", "valid"],
-             "fields": {f: [r[f] for r in valid_rows if r.get(f)] for f in identity}})
+        docs.append(_dataset_doc(
+            test_case_id="customer_profile", label="customer_profiles_v1",
+            title="Customer Profiles — reusable identity dataset",
+            description="Valid customer identity records (name/email) for reuse across test cases "
+                        "that need a real, consistent customer.",
+            tags=["identity", "customer", "valid"],
+            field_names=identity, all_columns=data_fields, valid_rows=valid_rows, related=related))
+
     for d in docs:
         with open(os.path.join(mongo_dir, f"{d['label']}.json"), "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=2)
+            json.dump(d, f, indent=2, ensure_ascii=False)
     return docs
 
 
@@ -151,19 +216,21 @@ def _seed_chroma(chroma_dir: str, docs: list[dict]) -> bool:
     shutil.rmtree(chroma_dir, ignore_errors=True)
     os.makedirs(chroma_dir, exist_ok=True)
     client = chromadb.PersistentClient(path=chroma_dir)
-    ef = DeterministicEmbeddingFunction()
+    ef = get_embedding_function()
     col = client.create_collection("tdm_cases", metadata={"hnsw:space": "cosine"}, embedding_function=ef)
     ids, embs, metas, texts = [], [], [], []
     for d in docs:
-        # Embed the field-name context (label/tags kept in metadata, not the vector) so cosine
-        # reflects field overlap with the query — meaningful under the offline hashed embedder.
-        context = " ".join(d["fields"].keys())
+        # Embed a DESCRIPTIVE context (title + tags + field names + sample values) so semantic
+        # similarity to the query is meaningful (CONTEXT-v3 option 2). Values stay in metadata too.
+        context = context_text(d["fields"], tags=d.get("tags"), title=d.get("title") or d["label"])
         ids.append(d["label"])
-        embs.append(embed(context))
+        embs.append(embed_text(context))
         metas.append({"test_case_id": d["test_case_id"], "label": d["label"],
-                      "fields": json.dumps(d["fields"])})
+                      "fields": json.dumps(d["fields"]),
+                      "rows": json.dumps(d.get("rows", []))})
         texts.append(context)
     col.add(ids=ids, embeddings=embs, documents=texts, metadatas=metas)
+    print(f"  (ChromaDB embedder: {active_embedder_name()})")
     return True
 
 
@@ -207,7 +274,7 @@ def main(argv=None) -> None:
     _write_playwright(os.path.join(upload, "results", "playwright.json"),
                       passing=valid[mid:], data_fields=data_fields)
 
-    docs = _write_mongo(os.path.join(DATA, "sample_mongo"), valid, reused_fields)
+    docs = _write_mongo(os.path.join(DATA, "sample_mongo"), valid, reused_fields, data_fields)
     _assert_no_placeholders(docs)
     chroma_ok = _seed_chroma(os.path.join(DATA, "sample_chroma"), docs)
 

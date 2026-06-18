@@ -4,7 +4,7 @@ import TracePanel from "./components/TracePanel.jsx";
 import ReviewGate from "./components/ReviewGate.jsx";
 import ReportView from "./components/ReportView.jsx";
 import PersistGate from "./components/PersistGate.jsx";
-import { mine, resume, persistDataset } from "./api.js";
+import { mine, resume, persistDataset, generateMore } from "./api.js";
 
 export default function App() {
   const [testCases, setTestCases] = useState([]);
@@ -20,6 +20,7 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [persistBusy, setPersistBusy] = useState(false);
   const [receipt, setReceipt] = useState(null);
+  const [generating, setGenerating] = useState(false);
 
   const hasInput = testCases.length > 0 || text.trim().length > 0;
 
@@ -65,6 +66,18 @@ export default function App() {
     }
   };
 
+  const runGenerateMore = async (rows) => {
+    setGenerating(true); setError(null); setReceipt(null);
+    try {
+      const r = await generateMore(session, rows);
+      setResult(r);
+    } catch (e) {
+      setError(e.message || "Generate-more failed");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const clearAll = () => {
     setTestCases([]); setResults([]); setText("");
     setTrace([]); setReview(null); setSession(null); setResult(null); setError(null); setReceipt(null);
@@ -100,7 +113,7 @@ export default function App() {
         <ReviewGate payload={review.payload} onSubmit={submitReview} busy={loading} />
       )}
 
-      <ReportView result={result} />
+      <ReportView result={result} onGenerateMore={session ? runGenerateMore : undefined} generating={generating} />
 
       {result && session && (
         <PersistGate onSave={saveDataset} busy={persistBusy} receipt={receipt} />

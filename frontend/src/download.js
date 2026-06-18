@@ -17,6 +17,8 @@ function csvEscape(v) {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+// PRIMARY export: clean test data — original columns only, the whole working set
+// (input + generated + fetched + gathered), NO provenance column.
 export function downloadCsv(result) {
   const rows = result?.final_dataset || [];
   if (!rows.length) return;
@@ -24,6 +26,16 @@ export function downloadCsv(result) {
   const lines = [cols.join(",")];
   rows.forEach((r) => lines.push(cols.map((c) => csvEscape(r[c])).join(",")));
   triggerDownload("test-data.csv", lines.join("\n"), "text/csv");
+}
+
+// SECONDARY (debug only): same rows with a leading `source` column. Clearly not the clean export.
+export function downloadCsvWithSources(result) {
+  const out = result?.output_rows || [];
+  if (!out.length) return downloadCsv(result);
+  const cols = result?.report?.columns || Object.keys(out[0].fields || {});
+  const lines = [["source", ...cols].join(",")];
+  out.forEach((r) => lines.push([csvEscape(r.source), ...cols.map((c) => csvEscape(r.fields?.[c]))].join(",")));
+  triggerDownload("test-data-with-sources.csv", lines.join("\n"), "text/csv");
 }
 
 export function downloadJson(result) {

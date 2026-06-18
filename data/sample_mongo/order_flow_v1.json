@@ -1,12 +1,134 @@
 {
   "test_case_id": "order_flow",
   "label": "order_flow_v1",
+  "title": "Order Checkout Flow — reusable valid dataset",
+  "description": "Valid order-checkout records mined from passing runs; reusable as fetched seed data to ground generation of new order rows.",
   "tags": [
     "order",
     "checkout",
     "valid"
   ],
+  "domain": "order",
+  "provenance": "fetched",
+  "source": {
+    "store": "mongodb",
+    "collection": "test_data_mining_datasets",
+    "origin": "passing_runs",
+    "ingested_from": [
+      "junit",
+      "playwright"
+    ]
+  },
+  "schema": {
+    "columns": [
+      "order_id",
+      "customer_name",
+      "email",
+      "country",
+      "currency",
+      "payment_method",
+      "card_number_masked",
+      "item_count",
+      "order_total",
+      "coupon_code",
+      "order_status",
+      "created_at"
+    ],
+    "key_fields": [
+      "order_id",
+      "customer_name",
+      "email",
+      "country",
+      "currency",
+      "payment_method",
+      "card_number_masked",
+      "item_count",
+      "order_total",
+      "coupon_code",
+      "order_status",
+      "created_at"
+    ],
+    "field_count": 12,
+    "primary_key": "order_id"
+  },
+  "constraints": {
+    "order_id": [
+      "required",
+      "unique"
+    ],
+    "customer_name": [
+      "required"
+    ],
+    "email": [
+      "required",
+      "email_format"
+    ],
+    "country": [
+      "required",
+      "ISO-3166"
+    ],
+    "currency": [
+      "required",
+      "ISO-4217"
+    ],
+    "payment_method": [
+      "required"
+    ],
+    "card_number_masked": [
+      "required",
+      "masked"
+    ],
+    "item_count": [
+      "required",
+      "integer"
+    ],
+    "order_total": [
+      "required",
+      ">=0"
+    ],
+    "coupon_code": [],
+    "order_status": [
+      "required"
+    ],
+    "created_at": [
+      "required",
+      "ISO-8601"
+    ]
+  },
+  "scenario_coverage": {
+    "valid": 7,
+    "boundary": 0,
+    "negative": 0,
+    "edge": 0
+  },
+  "record_count": 7,
+  "related_test_cases": [
+    "TC-late_night_order",
+    "TC-multi_item_with_coupon",
+    "TC-typical_order"
+  ],
+  "version": 1,
+  "created_at": "2026-01-15T10:00:00Z",
+  "updated_at": "2026-01-15T10:00:00Z",
   "fields": {
+    "order_id": [
+      "ORD-100001",
+      "ORD-100002",
+      "ORD-100003",
+      "ORD-100004",
+      "ORD-100005",
+      "ORD-100017",
+      "ORD-100020"
+    ],
+    "customer_name": [
+      "User_0001",
+      "User_0002",
+      "User_0003",
+      "User_0004",
+      "User_0005",
+      "User_0017",
+      "User_0020"
+    ],
     "email": [
       "user0001@example.com",
       "user0002@example.com",
@@ -15,6 +137,41 @@
       "user0005@example.com",
       "user0017@example.com",
       "user0020@example.com"
+    ],
+    "country": [
+      "US",
+      "GB",
+      "IN",
+      "DE",
+      "AU"
+    ],
+    "currency": [
+      "USD",
+      "GBP",
+      "INR",
+      "EUR",
+      "AUD"
+    ],
+    "payment_method": [
+      "credit_card",
+      "paypal",
+      "upi",
+      "debit_card"
+    ],
+    "card_number_masked": [
+      "****-****-****-1234",
+      "****-****-****-5678",
+      "****-****-****-9012",
+      "****-****-****-9090",
+      "****-****-****-4343"
+    ],
+    "item_count": [
+      "3",
+      "2",
+      "5",
+      "1",
+      "4",
+      "7"
     ],
     "order_total": [
       "149.99",
@@ -25,23 +182,122 @@
       "512.18",
       "1234.56"
     ],
-    "currency": [
-      "USD",
-      "GBP",
-      "INR",
-      "EUR",
-      "AUD",
-      "GBP",
-      "USD"
+    "coupon_code": [
+      "WELCOME10",
+      "SAVE20",
+      "FREESHIP"
     ],
-    "country": [
-      "US",
-      "GB",
-      "IN",
-      "DE",
-      "AU",
-      "GB",
-      "US"
+    "order_status": [
+      "completed"
+    ],
+    "created_at": [
+      "2026-01-04T09:12:33Z",
+      "2026-01-04T10:45:01Z",
+      "2026-01-05T14:22:10Z",
+      "2026-01-05T16:03:47Z",
+      "2026-01-06T08:30:00Z",
+      "2026-01-12T18:45:30Z",
+      "2026-01-13T21:59:59Z"
     ]
-  }
+  },
+  "rows": [
+    {
+      "order_id": "ORD-100001",
+      "customer_name": "User_0001",
+      "email": "user0001@example.com",
+      "country": "US",
+      "currency": "USD",
+      "payment_method": "credit_card",
+      "card_number_masked": "****-****-****-1234",
+      "item_count": "3",
+      "order_total": "149.99",
+      "coupon_code": "",
+      "order_status": "completed",
+      "created_at": "2026-01-04T09:12:33Z"
+    },
+    {
+      "order_id": "ORD-100002",
+      "customer_name": "User_0002",
+      "email": "user0002@example.com",
+      "country": "GB",
+      "currency": "GBP",
+      "payment_method": "paypal",
+      "card_number_masked": "",
+      "item_count": "2",
+      "order_total": "58.40",
+      "coupon_code": "WELCOME10",
+      "order_status": "completed",
+      "created_at": "2026-01-04T10:45:01Z"
+    },
+    {
+      "order_id": "ORD-100003",
+      "customer_name": "User_0003",
+      "email": "user0003@example.com",
+      "country": "IN",
+      "currency": "INR",
+      "payment_method": "upi",
+      "card_number_masked": "",
+      "item_count": "5",
+      "order_total": "2899.00",
+      "coupon_code": "",
+      "order_status": "completed",
+      "created_at": "2026-01-05T14:22:10Z"
+    },
+    {
+      "order_id": "ORD-100004",
+      "customer_name": "User_0004",
+      "email": "user0004@example.com",
+      "country": "DE",
+      "currency": "EUR",
+      "payment_method": "credit_card",
+      "card_number_masked": "****-****-****-5678",
+      "item_count": "1",
+      "order_total": "19.95",
+      "coupon_code": "",
+      "order_status": "completed",
+      "created_at": "2026-01-05T16:03:47Z"
+    },
+    {
+      "order_id": "ORD-100005",
+      "customer_name": "User_0005",
+      "email": "user0005@example.com",
+      "country": "AU",
+      "currency": "AUD",
+      "payment_method": "debit_card",
+      "card_number_masked": "****-****-****-9012",
+      "item_count": "4",
+      "order_total": "210.75",
+      "coupon_code": "SAVE20",
+      "order_status": "completed",
+      "created_at": "2026-01-06T08:30:00Z"
+    },
+    {
+      "order_id": "ORD-100017",
+      "customer_name": "User_0017",
+      "email": "user0017@example.com",
+      "country": "GB",
+      "currency": "GBP",
+      "payment_method": "credit_card",
+      "card_number_masked": "****-****-****-9090",
+      "item_count": "7",
+      "order_total": "512.18",
+      "coupon_code": "FREESHIP",
+      "order_status": "completed",
+      "created_at": "2026-01-12T18:45:30Z"
+    },
+    {
+      "order_id": "ORD-100020",
+      "customer_name": "User_0020",
+      "email": "user0020@example.com",
+      "country": "US",
+      "currency": "USD",
+      "payment_method": "credit_card",
+      "card_number_masked": "****-****-****-4343",
+      "item_count": "1",
+      "order_total": "1234.56",
+      "coupon_code": "",
+      "order_status": "completed",
+      "created_at": "2026-01-13T21:59:59Z"
+    }
+  ]
 }

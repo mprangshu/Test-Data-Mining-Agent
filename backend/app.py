@@ -47,6 +47,7 @@ app.add_middleware(
 
 GRAPH = build_graph()
 _SESSIONS: dict[str, dict] = {}   # session → meta (for /resume to rebuild the result payload)
+_ROUNDS: dict[str, dict] = {}     # session → latest working state (post-resume / post-generate-more)
 
 
 # --------------------------------------------------------------------------- #
@@ -114,7 +115,8 @@ def _result_payload(state: dict, meta: dict) -> dict:
         "type": "result",
         "meta": {**meta, "fields": len(state.get("parsed_fields", []))},
         "report": state.get("report"),
-        "final_dataset": state.get("final_dataset", []),
+        "final_dataset": state.get("final_dataset", []),            # clean rows (fields only) for CSV
+        "output_rows": state.get("output_rows", []),               # rows WITH provenance for the UI
         "coverage_gaps": [{"field_name": g.field_name, "scenario_type": g.scenario_type}
                           for g in state.get("coverage_gaps", [])],
         "gaps": state.get("gaps", []),
@@ -147,6 +149,7 @@ def _stream_events(graph_input, config: dict, session: str, meta: dict, cleanup_
                 last = now
             if not interrupted:
                 final = GRAPH.get_state(config).values
+                _ROUNDS[session] = final          # keep for /persist + the iterative /generate-more loop
                 yield json.dumps(_result_payload(final, meta)) + "\n"
                 _SESSIONS.pop(session, None)
         finally:
@@ -219,6 +222,55 @@ def resume(session: str = Form(...), review_selections: str = Form("[]")) -> Str
     )
 
 
+def _latest_state(session: str) -> dict:
+    """The most recent working state for a session: the latest generate-more round if any, else
+    the graph checkpoint (post-resume)."""
+    if session in _ROUNDS:
+        return _ROUNDS[session]
+    return GRAPH.get_state({"configurable": {"thread_id": session}}).values
+
+
+@app.post("/generate-more")
+def generate_more(session: str = Form(...), seed_selection: str = Form("[]")) -> dict:
+    """Iterative loop (CONTEXT-v3 §1, Q2=replace): the analyst's picked rows seed a fresh grounded
+    round. The selection becomes the new base; everything else is regenerated. Read-only (no save)."""
+    state = _latest_state(session)
+    if not state or not state.get("final_dataset"):
+        raise HTTPException(status_code=404, detail="No generated dataset for this session.")
+    try:
+        selection = json.loads(seed_selection or "[]")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="seed_selection must be valid JSON.")
+    if not isinstance(selection, list) or not selection:
+        raise HTTPException(status_code=422, detail="Select at least one row to seed the next round.")
+
+    from test_data_mining.nodes.synthesise import synthesise
+
+    columns = state.get("input_columns") or list(selection[0].keys())
+    sel_rows = [{c: r.get(c, "") for c in columns} for r in selection]   # the curated new base
+
+    new_state = dict(state)
+    new_state["input_rows"] = sel_rows                  # REPLACE: selection is the new seed/base
+    new_state["input_columns"] = columns
+    new_state["input_row_count"] = len(sel_rows)
+    new_state["round_index"] = int(state.get("round_index", 0)) + 1
+    new_state.update(synthesise(new_state))             # deterministic, consistent with the graph path
+    _ROUNDS[session] = new_state
+
+    meta = {"session": session, "round": new_state["round_index"],
+            "fields": len(new_state.get("parsed_fields", []))}
+    return jsonable_encoder({
+        "type": "result",
+        "meta": meta,
+        "round_index": new_state["round_index"],
+        "report": new_state.get("report"),
+        "final_dataset": new_state.get("final_dataset", []),
+        "output_rows": new_state.get("output_rows", []),
+        "gaps": new_state.get("gaps", []),
+        "errors": new_state.get("errors", []),
+    })
+
+
 @app.post("/persist")
 def persist(
     session: str = Form(...),
@@ -226,10 +278,9 @@ def persist(
     label: str = Form("generated_dataset"),
     tags: str = Form(""),
 ) -> dict:
-    """Persist gate: if ``save`` is truthy, write the session's dataset to MongoDB + ChromaDB."""
-    config = {"configurable": {"thread_id": session}}
-    state = GRAPH.get_state(config).values
-    final_dataset = state.get("final_dataset")
+    """Persist gate: if ``save`` is truthy, write the session's latest dataset to MongoDB + ChromaDB."""
+    state = _latest_state(session)
+    final_dataset = state.get("final_dataset") if state else None
     if not final_dataset:
         raise HTTPException(status_code=404, detail="No generated dataset for this session.")
     if str(save).lower() not in ("true", "1", "yes", "on"):

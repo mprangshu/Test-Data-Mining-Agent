@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from test_data_mining.embedding import DeterministicEmbeddingFunction, embed   # noqa: E402
+from test_data_mining.embedding import context_text, embed_text, get_embedding_function  # noqa: E402
 from test_data_mining.nodes.vector_search import vector_search                 # noqa: E402
 from test_data_mining.state import ParsedField, initial_state                  # noqa: E402
 
@@ -21,20 +21,21 @@ def _state(fields):
     return st
 
 
-def _query_text(fields):
-    return " ".join(n for n, _c in fields)   # node queries on field names
+def _node_query_context(fields):
+    # Mirror exactly what vector_search builds, so the seeded doc matches → similarity ~1.0.
+    return context_text([n for n, _c in fields], tags=sorted({c for _n, c in fields}))
 
 
 def test_returns_similar_case(tmp_path, monkeypatch):
     import chromadb
 
     fields = [("email", "Identity"), ("order_total", "Financial")]
+    ctx = _node_query_context(fields)
     client = chromadb.PersistentClient(path=str(tmp_path))
+    # Use the ACTIVE embedder (real MiniLM or deterministic) for both seed and query, so dims agree.
     col = client.create_collection("tdm_cases", metadata={"hnsw:space": "cosine"},
-                                   embedding_function=DeterministicEmbeddingFunction())
-    # Seed a doc whose embedding matches the node's query exactly → similarity ~1.0.
-    col.add(ids=["order_flow_v1"], embeddings=[embed(_query_text(fields))],
-            documents=["order_flow_v1"],
+                                   embedding_function=get_embedding_function())
+    col.add(ids=["order_flow_v1"], embeddings=[embed_text(ctx)], documents=[ctx],
             metadatas=[{"test_case_id": "order_flow", "label": "order_flow_v1",
                         "fields": json.dumps({"email": ["a@b.com"]})}])
 
@@ -44,7 +45,7 @@ def test_returns_similar_case(tmp_path, monkeypatch):
     assert len(out["retrieved_data"]) == 1
     rec = out["retrieved_data"][0]
     assert rec.test_case_id == "order_flow"
-    assert rec.similarity_score >= 0.70
+    assert rec.similarity_score >= 0.70          # exact-context match → ~1.0 for either embedder
     assert rec.fields["email"] == ["a@b.com"]
 
 

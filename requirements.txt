@@ -8,8 +8,12 @@ langchain-core>=0.3.0
 openpyxl>=3.1.0
 lxml>=5.0.0
 
-# --- Failure clustering (spec §2.6 — vector DB, NOT a graph DB) ---
+# --- Vector store + embeddings (spec §2.6 — vector DB, NOT a graph DB) ---
 chromadb>=0.5.0
+# Real embeddings: all-MiniLM-L6-v2 (384-dim) via sentence-transformers. Runs OFFLINE from a local
+# model snapshot — point EMBED_MODEL_PATH at it (no download). Falls back to the deterministic
+# hashed embedder (embedding.py) when the model/stack can't load. Pulls torch + transformers.
+sentence-transformers>=2.2,<4
 
 # --- LLM (generate / synthesise seam) ---
 # Google Gemini via the google-genai SDK. Key from env GEMINI_API_KEY (never committed).

@@ -46,6 +46,19 @@ export async function resume(session, reviewSelections, onEvent) {
   await consumeNdjson(resp, onEvent);
 }
 
+/**
+ * Iterative loop: the analyst's picked rows seed a fresh grounded round (replace semantics).
+ * `seedSelection` is an array of row field-objects. Returns the new round's result payload.
+ */
+export async function generateMore(session, seedSelection) {
+  const body = new FormData();
+  body.append("session", session);
+  body.append("seed_selection", JSON.stringify(seedSelection || []));
+  const resp = await fetch(`${API_BASE}/generate-more`, { method: "POST", body });
+  if (!resp.ok) throw new Error(await readErrorDetail(resp));
+  return resp.json();
+}
+
 /** Persist gate: save the session's generated dataset to MongoDB + ChromaDB. */
 export async function persistDataset(session, { save, label, tags }) {
   const body = new FormData();

@@ -1,10 +1,70 @@
 {
   "test_case_id": "customer_profile",
   "label": "customer_profiles_v1",
+  "title": "Customer Profiles — reusable identity dataset",
+  "description": "Valid customer identity records (name/email) for reuse across test cases that need a real, consistent customer.",
   "tags": [
     "identity",
+    "customer",
     "valid"
   ],
+  "domain": "identity",
+  "provenance": "fetched",
+  "source": {
+    "store": "mongodb",
+    "collection": "test_data_mining_datasets",
+    "origin": "passing_runs",
+    "ingested_from": [
+      "junit",
+      "playwright"
+    ]
+  },
+  "schema": {
+    "columns": [
+      "order_id",
+      "customer_name",
+      "email",
+      "country",
+      "currency",
+      "payment_method",
+      "card_number_masked",
+      "item_count",
+      "order_total",
+      "coupon_code",
+      "order_status",
+      "created_at"
+    ],
+    "key_fields": [
+      "email",
+      "customer_name"
+    ],
+    "field_count": 2,
+    "primary_key": "order_id"
+  },
+  "constraints": {
+    "email": [
+      "required",
+      "email_format"
+    ],
+    "customer_name": [
+      "required"
+    ]
+  },
+  "scenario_coverage": {
+    "valid": 7,
+    "boundary": 0,
+    "negative": 0,
+    "edge": 0
+  },
+  "record_count": 7,
+  "related_test_cases": [
+    "TC-late_night_order",
+    "TC-multi_item_with_coupon",
+    "TC-typical_order"
+  ],
+  "version": 1,
+  "created_at": "2026-01-15T10:00:00Z",
+  "updated_at": "2026-01-15T10:00:00Z",
   "fields": {
     "email": [
       "user0001@example.com",
@@ -24,5 +84,35 @@
       "User_0017",
       "User_0020"
     ]
-  }
+  },
+  "rows": [
+    {
+      "email": "user0001@example.com",
+      "customer_name": "User_0001"
+    },
+    {
+      "email": "user0002@example.com",
+      "customer_name": "User_0002"
+    },
+    {
+      "email": "user0003@example.com",
+      "customer_name": "User_0003"
+    },
+    {
+      "email": "user0004@example.com",
+      "customer_name": "User_0004"
+    },
+    {
+      "email": "user0005@example.com",
+      "customer_name": "User_0005"
+    },
+    {
+      "email": "user0017@example.com",
+      "customer_name": "User_0017"
+    },
+    {
+      "email": "user0020@example.com",
+      "customer_name": "User_0020"
+    }
+  ]
 }

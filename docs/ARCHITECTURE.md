@@ -1,267 +1,138 @@
-# Test Data Mining Agent — Architecture & Node Reference
+# ARCHITECTURE.md — Nodes, topology & state
 
-> A read-only LangGraph pipeline that mines CI/CD test-execution data and surfaces quality insights.
-> See `architecture.svg` for the visual flow. This document explains every node, the state it reads, and the state it writes.
-
----
-
-## Pipeline at a glance
-
-```
-CI/CD files  ──►  ingest  ──►  validate  ──►  ┌─ flaky_detect      ─┐
-                                               ├─ coverage_gap      ─┤  (parallel)
-                                               └─ failure_clustering ─┘
-                                                         │
-                                                   suite_health
-                                                         │
-                                          ┌──── L2 ─── review (HITL)
-                                          │
-                                       synthesis  ◄──── L1 / L3 (skip review)
-                                          │
-                                       persist  ──►  MongoDB report
-```
-
-**Three types of node in this pipeline:**
-
-| Type | Colour in diagram | Behaviour |
-|---|---|---|
-| Deterministic | Teal | Pure Python — same input always gives same output |
-| Parallel analysis | Purple | Three nodes that run at the same time |
-| LLM-assisted | Coral | Uses the language model for language tasks only |
-| Human gate | Amber | Pauses for a person before continuing |
+> Companion to [`CONTEXT.md`](CONTEXT.md). Visual: [`architecture.svg`](architecture.svg). This doc
+> explains the LangGraph topology, every node (what it reads/writes), and the shared state.
 
 ---
 
-## The shared state
+## Topology
 
-Every node reads from and writes to a single shared dictionary called `AgentState` (defined in `state.py`). Think of it as a form that gets filled in section by section.
+```
+START → parse → load_results → mongo_lookup → vector_search → coverage_gap
+      → generate → review (HITL, interrupt) → synthesise → persist → END
+```
 
-Key fields, in order of population:
+Single-parent sequential chain (not parallel). Reasons: a staggered multi-parent fan-in into
+`generate` re-ran upstream nodes when `review` interrupts on resume; sequential keeps
+interrupt/resume clean and the data volumes make the cost negligible. Defined in `graph.py`;
+checkpointer is `MemorySaver`. Nodes are wired as bare functions, so the graph runs deterministic
+(`llm=None`) — the Gemini seam exists but is a separate toggle.
 
-| Field | Type | Populated by |
+**Node colours (see SVG):** teal = deterministic · purple = vector (ChromaDB) · coral = LLM seam ·
+amber = human-in-the-loop · green = output/loop.
+
+---
+
+## Shared state (`state.py` · `AgentState`)
+
+A single `TypedDict` flows through the graph; each node returns only the keys it updates.
+`gaps`/`errors` use `operator.add` reducers so notes accumulate without clobbering.
+
+| Field | Type | Written by |
 |---|---|---|
-| `input_path` | `str` | Caller (set at startup) |
-| `autonomy_level` | `L1 / L2 / L3` | Caller |
-| `raw_results` | `list[TestResult]` | `ingest` |
-| `validation_ok` | `bool` | `validate` |
-| `flaky_findings` | `list[FlakyFinding]` | `flaky_detect` |
-| `coverage_findings` | `list[CoverageFinding]` | `coverage_gap` |
-| `failure_clusters` | `list[FailureCluster]` | `failure_clustering` |
-| `suite_health` | `SuiteHealth` | `suite_health` |
-| `review_decisions` | `dict` | `review` (HITL) |
-| `report` | `dict` | `synthesis` |
-| `gaps` | `list[str]` | Any node (graceful degradation notes) |
+| `input_path` | str | caller |
+| `parsed_fields` | `list[ParsedField]` | parse |
+| `input_rows` / `input_columns` / `input_row_count` | rows · cols · int | parse |
+| `result_signals` | `list[ResultSignal]` | load_results |
+| `seed_values` | `list[SeedValue]` | load_results |
+| `existing_data` | `list[ExistingRecord]` (fields + row-aligned `rows`) | mongo_lookup |
+| `retrieved_data` | `list[RetrievedRecord]` (fields + `rows` + similarity) | vector_search |
+| `coverage_gaps` | `list[CoverageGap]` | coverage_gap |
+| `candidate_sets` | `list[FieldCandidates]` | generate |
+| `review_selections` | `list[ReviewSelection]` | review (HITL) |
+| `final_dataset` | `list[dict]` (clean, for CSV) | synthesise |
+| `output_rows` | `list[OutputRow]` (fields + source + row_uid) | synthesise |
+| `report` | dict | synthesise |
+| `round_index` / `seed_selection` | int · rows | iterative loop (`/generate-more`) |
+| `persist_decision` / `persist_label` / `persist_tags` / `persist_receipt` | gate inputs/result | /persist |
+| `gaps` / `errors` | `list[str]` (reducers) | any node |
+
+Key dataclasses: `ParsedField`, `ResultSignal`, `SeedValue`, `ExistingRecord`, `RetrievedRecord`,
+`CoverageGap`, `CandidateSet`, `FieldCandidates`, `ReviewSelection`, `OutputRow`.
 
 ---
 
 ## Node reference
 
----
+### `parse` — deterministic — `nodes/parse.py`
+Reads the **primary** inputs (`test_cases/` or the input dir). Tabular files (csv/xlsx/json) →
+headers are field names (scenario/id columns excluded); `.txt` → Gherkin `<placeholders>`. Infers a
+category + constraints per field. Also captures the **original rows verbatim** via `_select_primary`
+(most-rows table wins; merges files with identical headers) → `input_rows`, `input_columns`,
+`input_row_count`. Never crashes → `gaps`.
+**Writes:** `parsed_fields`, `input_rows`, `input_columns`, `input_row_count`, `gaps`.
 
-### `ingest`
-**Type:** Deterministic  
-**File:** `nodes/ingest.py`  
-**Status:** ✅ Working
+### `load_results` — deterministic — `nodes/load_results.py`
+Parses **supporting** results: JUnit `<property name=… value=…>` and Playwright `annotations`.
+Produces `result_signals` (tag, scenario type, outcome, fields exercised) and `seed_values` (real
+values from **passing** runs only). No results dir → empty + an "unseeded" gap note.
+**Writes:** `result_signals`, `seed_values`, `gaps`.
 
-**What it does:**  
-Opens every result file in the configured `input_path`, detects the format (JUnit XML or Playwright JSON), parses it, and converts everything into a uniform list of `TestResult` records. Each record carries: test name, suite, pass/fail/skip/error outcome, duration, run ID, commit SHA, timestamp, and the raw error message + stack trace if it failed.
+### `mongo_lookup` — deterministic, READ-ONLY — `nodes/mongo_lookup.py`
+Matches stored datasets to the parsed fields (field-name overlap or test-case id). Live via
+`MONGODB_URI`, else local JSON in `data/sample_mongo/` (`MONGO_LOCAL_DIR`). Each record carries
+column pools (`fields`) **and** row-aligned `rows` (coherent reuse + provenance). Unreachable/empty →
+`[]` + gap.
+**Writes:** `existing_data` (the **fetched** source), `gaps`.
 
-**Why it matters:**  
-Different CI tools produce completely different file formats. This node is the "Rosetta Stone" — everything downstream sees one consistent structure regardless of what fed in.
+### `vector_search` — vector (ChromaDB), READ-ONLY — `nodes/vector_search.py`
+Embeds a descriptive query (field names + categories) with the active embedder and queries the
+collection (cosine, top-K=5, threshold 0.40 for MiniLM via `CHROMA_THRESHOLD`). Reads back `fields`
+and row-aligned `rows` from metadata. Missing store → `[]` + gap.
+**Writes:** `retrieved_data` (the **gathered** source), `gaps`.
 
-**Reads from state:** `input_path`  
-**Writes to state:** `raw_results`, `gaps`  
+### `coverage_gap` — deterministic — `nodes/coverage_gap.py`
+Builds the matrix `required fields × {valid, boundary, negative, edge}` minus what `result_signals`
+exercised (a ran-but-failed scenario still counts as exercised). With no results, every cell is a
+gap.
+**Writes:** `coverage_gaps`.
 
-**Graceful degradation:** A malformed file is logged in `gaps` and skipped. The node never raises — it returns whatever it managed to parse.
+### `generate` — LLM seam (deterministic default) — `nodes/generate.py`
+Per field, builds candidate value **sets** for the HITL gate: `gen_A` (valid-leaning, seeded from
+real passing values, constraint-validated), `gen_B` (gap-filling: boundary/negative/edge), plus
+pass-through `existing`/`retrieved` sets. Anti-hallucination: every valid value satisfies the
+field's constraints. Placeholder guard rejects `sample_value_*` / `generated_\d+` / `test_*`. For
+unknown schemas, `_synth` produces plausible values from constraints (no hardcoded column tables on
+the primary path).
+**Writes:** `candidate_sets`.
 
-**Data sources (MVP):**
+### `review` — human-in-the-loop, ALWAYS — `nodes/review.py`
+`interrupt(build_payload(...))` pauses the graph and surfaces each field's sets. Resuming with
+`Command(resume={"review_selections":[...]})` records the analyst's pick per field (or exclusion, or
+custom values). `auto_selections()` (widest coverage) drives non-UI resumes/tests.
+**Writes:** `review_selections`.
 
-| Format | What it parses |
-|---|---|
-| JUnit / TestNG XML | `<testsuite>` / `<testcase>` / `<failure>` / `<error>` elements |
-| Playwright JSON | `suites[].specs[].tests[].results[]` structure |
+### `synthesise` — deterministic + LLM seam — `nodes/synthesise.py`
+The assembler. Output = **`input_rows` (verbatim) + generated + fetched + gathered**.
+- Generated rows are coherent whole records — LLM-grounded (`_llm_rows`) or offline clone-and-perturb
+  (`_perturb`), grounded on originals + analyst picks + fetched + gathered (observed value pools).
+- Uses `inference.profile_columns` + `IdMinter` (unique ids) + learned `correlated_pairs`.
+- Scenario mix always includes valid; `scenario_tag`/`data_category` written only if present, tag =
+  content. Row count relaxed: `n_new = max(input_n, 5)`, guard `output ≥ input`.
+- Emits `final_dataset` (clean, fields only) and `output_rows` (with `source` + `row_uid`).
+**Writes:** `final_dataset`, `output_rows`, `report`.
 
----
-
-### `validate`
-**Type:** Deterministic  
-**File:** `nodes/stubs.py`  
-**Status:** 🔧 Stub (basic version working)
-
-**What it does:**  
-Runs quality gates on the normalised data before any analysis begins. Checks that results are not empty, flags tests that don't have enough run history for reliable flaky detection, and marks the state as valid or invalid. If data is partially corrupt, it notes the gaps and continues — it does not stop the pipeline.
-
-**Reads from state:** `raw_results`  
-**Writes to state:** `validation_ok`, `gaps`  
-
-**Key rule:** Never crash. Partial data with honest gap notes is always better than an error. This is a hard constraint from the spec (§1.4 — graceful degradation).
-
----
-
-### `flaky_detect`
-**Type:** Deterministic (parallel)  
-**File:** `nodes/flaky_detect.py`  
-**Status:** ✅ Working — meets spec targets (precision ≥ 0.85, recall ≥ 0.75)
-
-**What it does:**  
-For each test, it groups all its outcomes across runs at the same commit SHA and computes a **flakiness score** — a number from 0 (perfectly stable) to 1 (fails exactly half the time). A test is labelled **flaky** when it has *both* passing and failing outcomes, the minority outcome appears at least twice (to rule out a one-off infra blip), and the score crosses the configured cutoff.
-
-**The three verdicts:**
-
-| Verdict | Meaning |
-|---|---|
-| `flaky` | Both outcomes seen, minority ≥ 2 appearances, score ≥ cutoff |
-| `stable` | Only one outcome, or minority appeared only once |
-| `insufficient_history` | Fewer than `min_runs_for_flaky` observations |
-
-**Important:** A test that fails on *every* run is NOT flaky — it's a real regression. The detector keeps these separate. This is the most common trap in naive flaky detection.
-
-**Flakiness score formula:**
-```
-score = 1 - |passes - fails| / (passes + fails)
-```
-A 50/50 split scores 1.0 (maximally flaky). A 7-pass / 1-fail scores 0.25 (borderline).
-
-**Reads from state:** `raw_results`, `min_runs_for_flaky`, `flaky_score_cutoff`, `min_minority_fails`  
-**Writes to state:** `flaky_findings`
+### `persist` — deterministic, GATED — `nodes/persist.py`
+Only writes when the save gate is set. `write_dataset()` writes the dataset (column pools + row-
+aligned `rows`) to MongoDB (`MONGODB_URI`) or the local seed (closing the reuse loop) and **upserts**
+ChromaDB so it's retrievable next run. No Neo4j, no `KG_SIGNAL_*`.
+**Writes:** `persist_receipt`, `gaps` (only on a save).
 
 ---
 
-### `coverage_gap`
-**Type:** Deterministic (parallel)  
-**File:** `nodes/stubs.py`  
-**Status:** 🔧 Stub (Phase 2)
+## The two stores + embeddings
 
-**What it does:**  
-Parses coverage reports to find modules and files with low, missing, or declining test coverage. In the MVP it reads directly from coverage report files (JaCoCo XML or lcov format). If no coverage report is present in the input, it returns an empty list and records an honest gap note — it does not fail.
-
-**Phase 2 extension:** Requirement-level coverage gaps via MongoDB `requirement_id` references on test records (a shallow 1–2 hop lookup — no graph database).
-
-**Reads from state:** `input_path`  
-**Writes to state:** `coverage_findings`, `gaps`
-
----
-
-### `failure_clustering`
-**Type:** Vector DB + LLM-assisted (parallel)  
-**File:** `nodes/stubs.py`  
-**Status:** 🔧 Placeholder (exact-match grouping until ChromaDB is wired)
-
-**What it does — two distinct steps:**
-
-**Step 1 — Vector DB forms the clusters (pure maths, no LLM):**  
-Takes every failure message and stack trace, strips the parts that change each run (line numbers, timestamps, memory addresses), and produces a normalised signature. These signatures are converted to embedding vectors and stored in ChromaDB. ChromaDB then groups them by cosine similarity — failures that "mean the same thing" cluster together even if the exact wording differs.
-
-**Step 2 — LLM labels each cluster (language task):**  
-The LLM reads the representative failure from each cluster and writes a short human-readable label like "Database connection timeout — affects checkout flow". It can optionally use past resolved failures (RAG) to ground the label. This is the only part where an LLM is involved.
-
-**Why not just use string matching?**  
-Two stack traces for the same bug rarely look identical — different line numbers, different call paths from different test setups. Embedding + cosine similarity groups them correctly even with surface variation.
-
-**Why not a graph database?**  
-Grouping similar failures is a *semantic similarity* problem, which is exactly what a vector database solves. A graph database is for relationship traversal (multi-hop chains). They are different tools for different problems.
-
-**Reads from state:** `raw_results`  
-**Writes to state:** `failure_clusters`
-
----
-
-### `suite_health`
-**Type:** Deterministic  
-**File:** `nodes/stubs.py`  
-**Status:** 🔧 Stub (basic version in place)
-
-**What it does:**  
-Computes the four headline numbers for the test suite over the configured window of runs:
-
-| Metric | How it's calculated |
-|---|---|
-| Pass rate | passed outcomes / total outcomes |
-| Mean duration | average test execution time in seconds |
-| Flake rate | flaky tests / total distinct tests |
-| Window runs | number of distinct run IDs in the data |
-
-**Reads from state:** `raw_results`, `flaky_findings`  
-**Writes to state:** `suite_health`
-
----
-
-### `review`  *(L2 only)*
-**Type:** Human-in-the-loop (HITL)  
-**File:** `nodes/stubs.py`  
-**Status:** 🔧 Stub (LangGraph `interrupt()` to be wired)
-
-**What it does:**  
-Pauses the pipeline and presents the draft findings (flaky tests, coverage gaps, failure clusters) to the QA lead. The analyst can confirm items, dismiss false alarms, or adjust priorities. When they submit, the pipeline resumes with the filtered findings.
-
-**When it runs:** Only under **L2 (Supervised)** autonomy. Under L1 or L3, the conditional edge in `graph.py` routes straight to `synthesis`, skipping this node entirely.
-
-**Implementation mechanism:** LangGraph's `interrupt()` function saves the current state as a checkpoint and suspends. When the analyst submits their review, `Command(resume=...)` re-hydrates the state and continues.
-
-**Reads from state:** `flaky_findings`, `coverage_findings`, `failure_clusters`  
-**Writes to state:** `review_decisions`
-
----
-
-### `synthesis`
-**Type:** LLM  
-**File:** `nodes/stubs.py`  
-**Status:** 🔧 Stub (LLM router to be wired)
-
-**What it does:**  
-Takes all confirmed findings and asks the LLM (via the Hub's Python LLM router — Anthropic default) to rank them by severity and write prioritised, human-readable recommendations. Output is a structured report dictionary.
-
-**The LLM's job here is language, not computation.** It does not recalculate flakiness scores or re-cluster failures — it takes the already-computed, already-reviewed findings and writes the prose. Every LLM-claimed root cause is verified against the raw data before being included (anti-hallucination check).
-
-**Reads from state:** `flaky_findings`, `coverage_findings`, `failure_clusters`, `suite_health`, `review_decisions`  
-**Writes to state:** `report`
-
----
-
-### `persist`
-**Type:** Deterministic  
-**File:** `nodes/stubs.py`  
-**Status:** 🔧 Stub (MongoDB write to be wired)
-
-**What it does:**  
-Writes the final `report` dictionary to the MongoDB run store so it can be displayed in the Hub workspace and kept for historical comparison. No other writes happen anywhere in the pipeline — this is the only node that touches a database.
-
-**Hard rule:** No Neo4j. No `KG_SIGNAL_*` events. MongoDB only.
-
-**Reads from state:** `report`  
-**Writes to state:** *(nothing — side-effect only)*
-
----
-
-## The two databases
-
-| Database | Used for | Why this one |
+| Store | Holds | Why |
 |---|---|---|
-| **ChromaDB** | Storing and querying failure-signature embeddings (clustering) | Designed for vector similarity search — exactly what clustering needs |
-| **MongoDB** | Persisting the final report | Already in the platform; document format fits the report structure naturally |
+| **MongoDB** | datasets as documents (column pools + row-aligned rows) | document shape fits; the "fetched" source |
+| **ChromaDB** | dataset embeddings (384-dim, cosine) | vector similarity = the "gathered" source |
 
-Neither is a graph database. The spec explicitly rules out Neo4j because the agent has no deep relationship traversal requirements — clustering is a similarity problem (vector DB), and requirement linkage is a shallow 1–2 hop lookup (MongoDB aggregation).
-
----
-
-## Autonomy levels
-
-| Level | Review gate | Use when |
-|---|---|---|
-| **L1 — Assistive** | Skipped | Quick checks; low-stakes pipelines |
-| **L2 — Supervised** (default) | Active — analyst reviews before persist | Normal use |
-| **L3 — Goal-driven** | Skipped | Trusted, mature pipelines; nightly automated runs |
-
-The only code difference is a single conditional edge in `graph.py` that routes either through `review` or directly to `synthesis`.
+Neither is a graph database (invariant #2). Embeddings: `all-MiniLM-L6-v2` offline via
+`embedding.py`, deterministic hashed fallback when unavailable. See [`CONTEXT.md` §5](CONTEXT.md).
 
 ---
 
-## What "read-only" means in practice
+## Autonomy
 
-The agent reads files and databases. It writes exactly one thing: the final report to MongoDB via the `persist` node. It never:
-- Disables, quarantines, or skips a test
-- Modifies a CI pipeline configuration
-- Pushes changes to any repository
-- Writes to ChromaDB during a production run (embeddings may be cached, but that is infrastructure, not agent action)
-
-This is a hard constraint from the spec (§1.4) and is the foundation of the trust model with QA leads.
+L2 only. The set-selection review gate **always** runs (no L1/L3 skip path). The only other human
+decision is the explicit save gate in `persist`. There is no `AutonomyLevel` enum.

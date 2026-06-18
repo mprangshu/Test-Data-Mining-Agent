@@ -17,11 +17,13 @@ graceful degradation (nodes append to `gaps`/`errors`, never crash) · anti-hall
 from __future__ import annotations
 
 import operator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, Optional, TypedDict
 
 
 ScenarioType = Literal["valid", "boundary", "negative", "edge"]
+# Per-row provenance (UI metadata, NEVER a CSV column): where each output row came from.
+RowSource = Literal["input", "generated", "fetched", "gathered"]
 
 
 # ── Primary input: parsed test cases ──────────────────────────────────
@@ -56,7 +58,8 @@ class ExistingRecord:
     test_case_id: str
     label: str
     tags: list[str]
-    fields: dict[str, list[Any]]       # field → stored values
+    fields: dict[str, list[Any]]       # field → stored values (column-oriented)
+    rows: list[dict] = field(default_factory=list)   # row-aligned records (coherent), when available
 
 
 @dataclass
@@ -64,6 +67,7 @@ class RetrievedRecord:
     test_case_id: str
     similarity_score: float
     fields: dict[str, list[Any]]
+    rows: list[dict] = field(default_factory=list)   # row-aligned records (coherent), when available
 
 
 @dataclass
@@ -100,6 +104,14 @@ class ReviewSelection:
     custom_values: Optional[list[Any]] = None   # if analyst typed their own
 
 
+# ── Output row with provenance (CONTEXT-v3 §3) ────────────────────────
+@dataclass
+class OutputRow:
+    fields: dict[str, Any]             # ONLY the uploaded columns → values (the clean CSV content)
+    source: str                        # "input" | "generated" | "fetched" | "gathered" (UI-only)
+    row_uid: str                       # stable id so the UI can reference a row back to the agent
+
+
 # ── The graph state ───────────────────────────────────────────────────
 class AgentState(TypedDict, total=False):
     input_path: str
@@ -117,8 +129,12 @@ class AgentState(TypedDict, total=False):
 
     review_selections: list[ReviewSelection]    # review (HITL)
 
-    final_dataset: list[dict[str, Any]]         # synthesise
+    final_dataset: list[dict[str, Any]]         # synthesise — clean rows (fields only, for CSV)
+    output_rows: list[OutputRow]                # synthesise — rows WITH provenance (for the UI/API)
     report: Optional[dict[str, Any]]            # synthesise
+
+    round_index: int                            # iterative loop (Phase 4): which round we're on
+    seed_selection: list[dict[str, Any]]        # rows the user picked to seed the next round
 
     persist_decision: Optional[bool]            # /persist
     persist_label: Optional[str]
@@ -147,6 +163,9 @@ def initial_state(input_path: str) -> AgentState:
         candidate_sets=[],
         review_selections=[],
         final_dataset=[],
+        output_rows=[],
+        round_index=0,
+        seed_selection=[],
         report=None,
         persist_decision=None,
         persist_label=None,

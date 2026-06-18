@@ -63,6 +63,7 @@ def mongo_lookup(state: AgentState) -> dict:
                 label=d.get("label", ""),
                 tags=d.get("tags", []),
                 fields=dfields,
+                rows=d.get("rows", []) or [],         # row-aligned records (coherent), when stored
             ))
 
     print(f"NODE_EXIT mongo_lookup: {len(existing)} existing dataset(s) matched")
