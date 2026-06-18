@@ -3,7 +3,8 @@ import InputPanel from "./components/InputPanel.jsx";
 import TracePanel from "./components/TracePanel.jsx";
 import ReviewGate from "./components/ReviewGate.jsx";
 import ReportView from "./components/ReportView.jsx";
-import { mine, resume } from "./api.js";
+import PersistGate from "./components/PersistGate.jsx";
+import { mine, resume, persistDataset } from "./api.js";
 
 export default function App() {
   const [testCases, setTestCases] = useState([]);
@@ -15,18 +16,33 @@ export default function App() {
   const [error, setError] = useState(null);
   const [trace, setTrace] = useState([]);
   const [review, setReview] = useState(null);   // {session, payload} at the review gate
+  const [session, setSession] = useState(null); // kept for the persist gate
   const [result, setResult] = useState(null);
+  const [persistBusy, setPersistBusy] = useState(false);
+  const [receipt, setReceipt] = useState(null);
 
   const hasInput = testCases.length > 0 || text.trim().length > 0;
 
   const onEvent = (evt) => {
     if (evt.type === "node") setTrace((t) => [...t, evt]);
-    else if (evt.type === "interrupt") setReview({ session: evt.session, payload: evt.payload });
+    else if (evt.type === "interrupt") { setSession(evt.session); setReview({ session: evt.session, payload: evt.payload }); }
     else if (evt.type === "result") setResult(evt);
   };
 
+  const saveDataset = async ({ label, tags }) => {
+    setPersistBusy(true);
+    try {
+      const r = await persistDataset(session, { save: true, label, tags });
+      setReceipt(r.receipt);
+    } catch (e) {
+      setError(e.message || "Save failed");
+    } finally {
+      setPersistBusy(false);
+    }
+  };
+
   const runMine = async () => {
-    setLoading(true); setError(null); setResult(null); setTrace([]); setReview(null);
+    setLoading(true); setError(null); setResult(null); setTrace([]); setReview(null); setReceipt(null);
     try {
       await mine({ testCases, results, text, format }, onEvent);
     } catch (e) {
@@ -51,7 +67,7 @@ export default function App() {
 
   const clearAll = () => {
     setTestCases([]); setResults([]); setText("");
-    setTrace([]); setReview(null); setResult(null); setError(null);
+    setTrace([]); setReview(null); setSession(null); setResult(null); setError(null); setReceipt(null);
   };
 
   return (
@@ -85,6 +101,10 @@ export default function App() {
       )}
 
       <ReportView result={result} />
+
+      {result && session && (
+        <PersistGate onSave={saveDataset} busy={persistBusy} receipt={receipt} />
+      )}
 
       {!result && !error && !loading && trace.length === 0 && (
         <p className="text-center text-sm text-slate-400 mt-10">

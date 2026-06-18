@@ -28,4 +28,4 @@ Start-Process -FilePath "cmd.exe" -WorkingDirectory (Join-Path $repo "frontend")
 
 Write-Host ""
 Write-Host "Demo launching in two windows. Open http://localhost:5173 in your browser." -ForegroundColor Green
-Write-Host "Sample data to upload: data\sample_upload\run_0..5.xml  (2 flaky tests expected)." -ForegroundColor Green
+Write-Host "Sample data: data\sample_upload\test_cases\ (+ results\). Run scripts\generate_fixtures.py to (re)seed." -ForegroundColor Green

@@ -17,5 +17,5 @@ echo "Starting frontend -> http://localhost:5173"
 frontend_pid=$!
 
 trap 'kill $backend_pid $frontend_pid 2>/dev/null || true' INT TERM
-echo "Open http://localhost:5173 — upload data/sample_upload/run_*.xml (2 flaky tests; try L2 for the review gate)."
+echo "Open http://localhost:5173 — upload data/sample_upload/test_cases/ (+ results/). Seed with scripts/generate_fixtures.py."
 wait

@@ -217,3 +217,26 @@ def resume(session: str = Form(...), review_selections: str = Form("[]")) -> Str
         _stream_events(Command(resume={"review_selections": selections}), config, session, meta),
         media_type="application/x-ndjson",
     )
+
+
+@app.post("/persist")
+def persist(
+    session: str = Form(...),
+    save: str = Form("false"),
+    label: str = Form("generated_dataset"),
+    tags: str = Form(""),
+) -> dict:
+    """Persist gate: if ``save`` is truthy, write the session's dataset to MongoDB + ChromaDB."""
+    config = {"configurable": {"thread_id": session}}
+    state = GRAPH.get_state(config).values
+    final_dataset = state.get("final_dataset")
+    if not final_dataset:
+        raise HTTPException(status_code=404, detail="No generated dataset for this session.")
+    if str(save).lower() not in ("true", "1", "yes", "on"):
+        return {"saved": False}
+
+    from test_data_mining.nodes.persist import write_dataset
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    receipt = write_dataset(final_dataset, label or "generated_dataset", tag_list, state.get("report"))
+    return {"saved": True, "receipt": receipt}

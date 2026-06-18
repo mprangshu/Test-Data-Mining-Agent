@@ -12,6 +12,11 @@ vector_search. `review` always interrupts (L2-only) — resume via `Command(resu
 from __future__ import annotations
 
 import argparse
+import logging
+
+# Our state dataclasses round-trip through the MemorySaver checkpoint fine; LangGraph just emits a
+# forward-compat advisory about serializing unregistered types. Quiet that known-safe noise.
+logging.getLogger("langgraph.checkpoint.serde.jsonplus").setLevel(logging.ERROR)
 
 from .state import AgentState, initial_state
 from .nodes.parse import parse

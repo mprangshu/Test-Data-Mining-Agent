@@ -14,9 +14,19 @@ on error/quota) generation is fully deterministic, so this runs offline and in t
 """
 from __future__ import annotations
 
+import re
+
 from ..state import AgentState, CandidateSet, FieldCandidates
 
-_MAX = 6  # values per set
+_MAX = 24  # values per set (raised from 6 so sets carry enough distinct values to fill rows)
+
+# Reject leaked placeholders so they never seed a candidate set (IMPROVEMENT.md §3).
+_PLACEHOLDER = re.compile(r"^(sample_value_\d+|generated_\d+|test_.*)$", re.IGNORECASE)
+
+
+def _is_placeholder(v) -> bool:
+    return bool(_PLACEHOLDER.match(str(v).strip()))
+
 
 # Deterministic value pools (field-name specific; generic fallback by scenario type).
 _VALID = {
@@ -66,12 +76,6 @@ _EDGE = {
     "item_count": ["1000"],
     "currency": ["JPY", "BRL"],
 }
-_GENERIC = {
-    "valid": ["sample_value_1", "sample_value_2", "sample_value_3"],
-    "negative": ["", "INVALID", "!!!"],
-    "boundary": ["", "X", "X" * 256],
-    "edge": ["<edge-case>"],
-}
 _TABLE = {"valid": _VALID, "negative": _NEGATIVE, "boundary": _BOUNDARY, "edge": _EDGE}
 
 
@@ -85,8 +89,56 @@ def _dedupe(values: list) -> list:
     return out
 
 
-def _pool(field_name: str, stype: str) -> list:
-    return list(_TABLE[stype].get(field_name.lower(), _GENERIC[stype]))
+def _synth(field, stype: str) -> list:
+    """Schema-agnostic per-column generation (IMPROVEMENT.md §3): plausible values inferred from
+    the field's constraints/name when no hardcoded pool matches. Never emits `sample_value_*`."""
+    cons = field.constraints
+    name = field.name
+    if stype == "valid":
+        if "email_format" in cons:
+            return [f"user{i}@example.com" for i in (1, 2, 3)]
+        if "ISO-4217" in cons:
+            return ["USD", "EUR", "GBP", "INR"]
+        if "ISO-3166" in cons:
+            return ["US", "GB", "DE", "IN"]
+        if "ISO-8601" in cons:
+            return ["2026-02-01T09:00:00Z", "2026-03-15T14:30:00Z"]
+        if "integer" in cons:
+            return ["1", "2", "3", "5"]
+        if ">=0" in cons:
+            return ["19.99", "49.50", "149.00"]
+        return [f"{name}_{i:03d}" for i in (1, 2, 3)]
+    if stype == "negative":
+        out = [""] if "required" in cons else []
+        if "email_format" in cons:
+            out += ["bad@", "no-at-symbol"]
+        if "ISO-4217" in cons:
+            out += ["XXX", "US"]
+        if "integer" in cons:
+            out += ["-1", "abc"]
+        if ">=0" in cons:
+            out += ["-1.00", "NaN"]
+        return out or ["", "INVALID"]
+    if stype == "boundary":
+        if "integer" in cons:
+            return ["0", "2147483647"]
+        if ">=0" in cons:
+            return ["0.00", "0.01", "9999999.99"]
+        if "email_format" in cons:
+            return ["a@b.co", ("x" * 64) + "@example.com"]
+        return ["", "X" * 256]
+    # edge
+    if ">=0" in cons:
+        return ["1234567.89"]
+    if "ISO-4217" in cons:
+        return ["JPY", "BRL"]
+    return [f"<edge-{name}>"]
+
+
+def _pool(field, stype: str) -> list:
+    """Values for a field × scenario type: hardcoded demo pool if the name matches, else synthesise."""
+    pool = _TABLE[stype].get(field.name.lower())
+    return list(pool) if pool else _synth(field, stype)
 
 
 def _valid_value(v, constraints: list[str]) -> bool:
@@ -129,7 +181,7 @@ def _llm_valid_values(llm, field, examples: list[str]) -> list[str]:
 def _aggregate(records, field_name: str) -> list:
     out = []
     for rec in records:
-        out.extend(rec.fields.get(field_name, []))
+        out.extend(v for v in rec.fields.get(field_name, []) if not _is_placeholder(v))
     return _dedupe(out)
 
 
@@ -149,13 +201,14 @@ def generate(state: AgentState, llm=None) -> dict:
         sets: list[CandidateSet] = []
 
         # gen_A — valid (seeded → optionally LLM-enriched → deterministic), constraint-validated
-        seeded = [v for v in (seeds.get(f.name) or []) if _valid_value(v, f.constraints)]
+        seeded = [v for v in (seeds.get(f.name) or [])
+                  if _valid_value(v, f.constraints) and not _is_placeholder(v)]
         valid_vals = list(seeded)
         if llm is not None:
-            valid_vals += _llm_valid_values(llm, f, seeded or _pool(f.name, "valid"))
+            valid_vals += _llm_valid_values(llm, f, seeded or _pool(f, "valid"))
         if not valid_vals:
-            valid_vals = [v for v in _pool(f.name, "valid") if _valid_value(v, f.constraints)] \
-                         or _pool(f.name, "valid")
+            valid_vals = [v for v in _pool(f, "valid") if _valid_value(v, f.constraints)] \
+                         or _pool(f, "valid")
         note_a = "valid-leaning" + (" (seeded from real data)" if seeded else "")
         sets.append(CandidateSet("gen_A", "generated", _dedupe(valid_vals)[:_MAX], ["valid"], note_a))
 
@@ -164,7 +217,7 @@ def generate(state: AgentState, llm=None) -> dict:
         gb_vals, cover = [], []
         for st in ("boundary", "negative", "edge"):
             if st in targets:
-                gb_vals += _pool(f.name, st)
+                gb_vals += _pool(f, st)
                 cover.append(st)
         sets.append(CandidateSet("gen_B", "generated", _dedupe(gb_vals)[:_MAX],
                                  cover or ["boundary", "negative"],

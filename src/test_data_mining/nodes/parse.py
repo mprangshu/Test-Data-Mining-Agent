@@ -133,6 +133,25 @@ def _read_json(path: str):
     return [], []
 
 
+def _select_primary(tables: list[tuple[list[str], list[dict]]]) -> tuple[list[str], list[dict]]:
+    """Pick the original-rows table (most rows wins; merge any sharing identical headers).
+
+    These rows pass through ``synthesise`` UNCHANGED (invariant #7, additive). Values are kept
+    verbatim; only missing columns are filled with "" so every row carries the full column set.
+    Schema-only inputs (Gherkin ``.txt``, a JSON ``{"fields": [...]}`` doc) contribute no rows.
+    """
+    tables = [(h, r) for h, r in tables if h and r]
+    if not tables:
+        return [], []
+    primary_headers = max(tables, key=lambda t: len(t[1]))[0]
+    rows: list[dict] = []
+    for headers, rs in tables:
+        if headers == primary_headers:
+            rows.extend(rs)
+    norm = [{c: r.get(c, "") for c in primary_headers} for r in rows]
+    return list(primary_headers), norm
+
+
 def _from_txt(acc, text: str, gaps: list[str], src: str) -> None:
     placeholders = re.findall(r"<([^>]+)>", text)
     low = text.lower()
@@ -160,17 +179,21 @@ def parse(state: AgentState) -> dict:
 
     acc: "OrderedDict[str, dict]" = OrderedDict()
     gaps: list[str] = []
+    tables: list[tuple[list[str], list[dict]]] = []   # tabular files → original rows (verbatim)
     files = [f for f in sorted(os.listdir(root)) if os.path.isfile(os.path.join(root, f))]
     for fn in files:
         ext = os.path.splitext(fn)[1].lower()
         fp = os.path.join(root, fn)
         try:
             if ext == ".csv":
-                _from_table(acc, *_read_csv(fp))
+                headers, rows = _read_csv(fp)
+                _from_table(acc, headers, rows); tables.append((headers, rows))
             elif ext == ".xlsx":
-                _from_table(acc, *_read_xlsx(fp))
+                headers, rows = _read_xlsx(fp)
+                _from_table(acc, headers, rows); tables.append((headers, rows))
             elif ext == ".json":
-                _from_table(acc, *_read_json(fp))
+                headers, rows = _read_json(fp)
+                _from_table(acc, headers, rows); tables.append((headers, rows))
             elif ext == ".txt":
                 with open(fp, encoding="utf-8") as f:
                     _from_txt(acc, f.read(), gaps, fn)
@@ -185,5 +208,18 @@ def parse(state: AgentState) -> dict:
     if not fields:
         gaps.append("parse: no fields extracted from primary inputs")
 
-    print(f"NODE_EXIT parse: {len(fields)} fields from {len(files)} file(s)")
-    return {"parsed_fields": fields, "gaps": gaps}
+    # Original rows pass through synthesise UNCHANGED (invariants #7/#9): the output keeps these
+    # exact columns and starts from these exact rows, then appends generated rows.
+    input_columns, input_rows = _select_primary(tables)
+    if not input_rows:
+        gaps.append("parse: no tabular rows found — output will be generated-only (still > 0 rows)")
+
+    print(f"NODE_EXIT parse: {len(fields)} fields, {len(input_rows)} original rows "
+          f"({len(input_columns)} cols) from {len(files)} file(s)")
+    return {
+        "parsed_fields": fields,
+        "input_rows": input_rows,
+        "input_columns": input_columns,
+        "input_row_count": len(input_rows),
+        "gaps": gaps,
+    }

@@ -1,117 +1,97 @@
-# Test Data Mining Agent
+# Test Data Mining Agent (v2)
 
-A read-only, **LangGraph**-based analysis agent that mines a project's CI/CD test-execution
-data and produces a prioritised quality-intelligence report. It detects flaky tests, surfaces
-coverage gaps, clusters recurring failures by root-cause signature, and tracks suite-health
-trends — and it **never modifies tests or pipelines**.
+A **LangGraph**-based agent that **generates accurate, ready-to-use test data**. It takes
+**test cases / user stories** plus their **JUnit/Playwright result files**, mines existing data
+from **MongoDB** and similar data from **ChromaDB**, detects **coverage gaps**, then generates
+**2–3 candidate value sets per field**. A QA engineer picks one set per field in a
+human-in-the-loop gate; the chosen sets are assembled into rows, **downloaded as CSV**, and
+**optionally saved back to MongoDB** (and upserted to ChromaDB) for reuse.
 
-Built following the **ADLC** (Agent Development LifeCycle). The full approved design lives in
-[`docs/test-data-mining.md`](docs/test-data-mining.md). If you're using Claude Code on this
-repo, read [`CLAUDE.md`](CLAUDE.md) first — it's the working contract.
+> Authoritative design: [`docs/TDM-PIVOT-v2.md`](docs/TDM-PIVOT-v2.md). Working contract:
+> [`CLAUDE.md`](CLAUDE.md). Build history & status: [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md).
+> *(v1 was a read-only CI-results analysis agent — preserved on the `v1` branch.)*
 
-## What it does (the five goals)
+## The two inputs
 
-1. **Flaky-test detection** — tests that pass *and* fail at the same commit, ranked by score.
-2. **Coverage-gap surfacing** — modules with low / missing / declining coverage.
-3. **Failure clustering** — group failures by normalised root-cause signature (vector DB).
-4. **Suite-health trend** — pass rate, mean duration, flake rate over a window.
-5. **Prioritised report** — a ranked, recommendation-bearing report for a QA lead.
+| Input | Role | Formats |
+|---|---|---|
+| **Test cases / user stories** (primary) | what fields are needed | `.xlsx`, `.csv`, `.json`, `.txt` (Gherkin) |
+| **Test results** (supporting, optional) | coverage gaps + realistic seed values | JUnit/TestNG `.xml`, Playwright `.json` |
+
+## Pipeline
+
+```
+parse → load_results → mongo_lookup → vector_search → coverage_gap
+      → generate → review (HITL, ALWAYS) → synthesise → persist
+```
+
+Autonomy is **L2 only** — the set-selection review gate always runs. The only other human
+decision is the explicit save gate in `persist`.
 
 ## Quick start
 
 ```bash
-# 1. (optional) create a virtualenv
-python -m venv .venv && source .venv/bin/activate
-
-# 2. install deps
+python -m venv .venv && source .venv/bin/activate     # (Windows: .\.venv\Scripts\activate)
 pip install -r requirements.txt
-
-# 3. generate test data — no external services needed (stdlib only)
-python scripts/generate_fixtures.py
-
-# 4. run the unit tests
+python scripts/generate_fixtures.py        # seed MongoDB(local JSON) + ChromaDB + sample inputs/results
 pytest -q
-
-# 5. score the deterministic detector against the golden set
-python scripts/score_golden.py
-
-# 6. run the full graph from the CLI
-python -m test_data_mining.graph --input data/fixtures --autonomy L1
+python -m test_data_mining.graph --input data/sample_upload   # CLI: runs to the gate, auto-resumes
 ```
 
 ## Run the full demo (web UI)
 
-The interactive demo is a FastAPI backend + a React/Tailwind frontend (see
-[`docs/demo-overview.md`](docs/demo-overview.md)).
-
 ```powershell
 # one-time setup
 python -m venv .venv ; .\.venv\Scripts\pip install -r requirements.txt
+python scripts\generate_fixtures.py
 cd frontend ; npm install ; cd ..
 
-# launch backend (:8000) + frontend (:5173) in two windows
+# launch backend (:8000) + frontend (:5173)
 powershell -ExecutionPolicy Bypass -File scripts\run_demo.ps1
 ```
 
-Or start them manually: `uvicorn backend.app:app --port 8000` and (in `frontend/`) `npm run dev`.
-Then open **http://localhost:5173**, switch to the **Upload files** tab, and add the six
-`data/sample_upload/run_*.xml` files (two tests are intentionally flaky). Pick **L2** autonomy
-to see the human-in-the-loop review gate pause before the report.
+Or manually: `uvicorn backend.app:app --port 8000` and (in `frontend/`) `npm run dev`. Open
+**http://localhost:5173**, add the seeded **Test cases** (`data/sample_upload/test_cases/`) and
+**Test results** (`data/sample_upload/results/`), click **Mine & Generate**, pick a value set per
+field at the review gate, download the **CSV**, then optionally **Save** the dataset for reuse.
+
+### LLM (optional)
+
+Generation/synthesis use **Google Gemini** via the seam in `llm.py`, keyed by env
+`GEMINI_API_KEY` (model `GEMINI_MODEL`, default `gemini-2.5-flash`) — set in a gitignored `.env`.
+With no key (or no quota) the agent falls back to **deterministic, seeded** generation, so it
+runs fully offline. On a TLS-inspecting corporate network, point `SSL_CERT_FILE` at a CA bundle.
 
 ## Project layout
 
 ```
 test-data-mining-agent/
-├── CLAUDE.md                  # Claude Code contract (read first)
-├── README.md                  # this file
-├── requirements.txt
-├── docs/
-│   ├── test-data-mining.md    # the approved ADLC spec (source of truth)
-│   ├── demo-overview.md       # senior overview of the demo UI + architecture
-│   ├── BUILD-PLAN.md          # phased build TODO (agent + API + React UI)
-│   ├── UNDERSTANDING.md       # plain-language project explainer
-│   ├── ROADMAP.md             # node-by-node build checklist
-│   └── DATA.md                # data sourcing decision + how to get/generate data
+├── CLAUDE.md · README.md · requirements.txt · tdm_demo_output.csv  (canonical schema)
+├── docs/                       # TDM-PIVOT-v2 (authoritative) · BUILD-PLAN · demo-overview · …
 ├── src/test_data_mining/
-│   ├── state.py               # AgentState contract
-│   ├── graph.py               # StateGraph wiring + conditional HITL routing
-│   └── nodes/
-│       ├── ingest.py          # JUnit XML + Playwright JSON parsers
-│       ├── flaky_detect.py    # deterministic flakiness scoring
-│       ├── failure_clustering.py  # ChromaDB vector clustering + grounded labels
-│       ├── synthesis.py       # ranked findings + grounded recommendations (LLM seam)
-│       ├── persist.py         # MongoDB run store / local JSON fallback
-│       └── stubs.py           # validate / coverage_gap / suite_health / review
-├── backend/
-│   └── app.py                 # FastAPI: /analyse, /analyse/stream (trace), /resume (L2 HITL)
-├── frontend/                  # React + Vite + Tailwind single-page demo UI
-│   └── src/                   # InputPanel · TracePanel · ReviewGate · ReportView
-├── scripts/
-│   ├── generate_fixtures.py   # synthetic data + golden labels
-│   ├── score_golden.py        # precision/recall harness
-│   └── run_demo.ps1           # one-command launcher (backend + frontend)
+│   ├── state.py · graph.py · llm.py · embedding.py
+│   └── nodes/                  # parse · load_results · mongo_lookup · vector_search ·
+│                               # coverage_gap · generate · review · synthesise · persist
+├── backend/app.py              # FastAPI: /mine (stream→gate), /resume, /persist, /health
+├── frontend/src/               # React+Tailwind: InputPanel · TracePanel · ReviewGate ·
+│                               # ReportView · PersistGate
+├── scripts/                    # generate_fixtures.py · run_demo.ps1 / .sh
 ├── data/
-│   ├── fixtures/  golden/     # generated data + ground-truth labels
-│   └── sample_upload/         # ready-to-upload demo runs (2 flaky tests)
-└── tests/                     # unit + integration + adversarial + backend/API
+│   ├── sample_upload/          # test_cases/ + results/  (seeded demo inputs)
+│   ├── sample_mongo/           # local MongoDB seed (reuse loop)
+│   └── sample_chroma/          # local ChromaDB store (gitignored)
+└── tests/                      # parse · load_results · mongo_lookup · vector_search ·
+                                # coverage_gap · generate · persist · backend · integration · adversarial
 ```
 
-## Current status
+## Invariants (do not violate)
 
-**The full pipeline and demo work end-to-end.** Deterministic detectors (flaky, suite-health)
-meet the spec targets (flaky precision ≥ 0.85, recall ≥ 0.75); failure clustering runs on
-ChromaDB (offline, local embeddings); synthesis ranks findings and writes grounded
-recommendations; reports persist to MongoDB (or local JSON). The web UI streams a live agent
-trace and supports the L2 review gate. The build history is in [`docs/BUILD-PLAN.md`](docs/BUILD-PLAN.md).
-
-> **LLM note:** per the spec, LLM use (cluster labels, synthesis narrative) is routed through
-> the Hub LLM router — never a standalone key in this repo. Those are wired as ready injection
-> seams; the offline default is deterministic + grounded, with anti-hallucination checks intact.
-
-## Hard rules (do not violate)
-
-- **Read-only.** Never disable, quarantine, or rewrite tests; never mutate pipelines.
-- **No graph database / no Neo4j.** Clustering uses ChromaDB (vectors); Phase-2 requirement
-  linkage uses MongoDB document refs. See spec §2.6.
-- **Deterministic detectors before LLM.** The LLM only normalises failure messages, labels
-  clusters, and writes the final synthesis — never computes a flakiness score.
+1. **Read-before-write on MongoDB** — the mine phase is read-only; the only write is the explicit
+   `persist` save gate (`save=true`).
+2. **No graph DB / no Neo4j** — vectors → ChromaDB, documents → MongoDB. No `KG_SIGNAL_*` events.
+3. **Deterministic before LLM** — `parse`/`load_results`/`mongo_lookup`/`vector_search`/`coverage_gap`
+   run before the LLM `generate` step.
+4. **Graceful degradation** — any store unreachable or input malformed → empty result + a gap note,
+   never a crash (no Mongo data → pure-LLM generation path).
+5. **LLM via Gemini** — env key only, deterministic fallback; **anti-hallucination**: every
+   generated value is validated against the field's constraints before it becomes a candidate.

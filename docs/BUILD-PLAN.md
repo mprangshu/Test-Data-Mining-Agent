@@ -31,8 +31,9 @@
 | 4 | ✅ Graph wired + backend `/mine` + `/resume`; pipeline runs to review interrupt; resume → `final_dataset` 🎯 | 3 |
 | 5 | ✅ Frontend: two-bucket upload → mine → trace to the review gate | 4 |
 | 6 | ✅ Set-based HITL: `review` interrupt + `ReviewGate` radios + `/resume` → CSV report + download 🎯 | 5 |
-| 7 | Save-back loop: `persist` (Mongo+Chroma) + `PersistGate`; re-run reuses saved data 🎯 | 6 |
-| 8 | Tests (unit/integration/adversarial) + polish + demo dry-run 🎯 | all |
+| 7 | ✅ Save-back loop: `persist` (Mongo+Chroma) + `PersistGate`; re-run reuses saved data 🎯 | 6 |
+| 8 | ✅ Tests (unit/integration/adversarial) + polish + demo dry-run 🎯 | all |
+| 9 | ✅ **Additive + schema-agnostic output fix** ([`IMPROVEMENT.md`](IMPROVEMENT.md)): output = originals + new rows, always larger, any schema, LLM-coherent 🎯 | 8 |
 
 ---
 
@@ -172,22 +173,79 @@ boundary, coupon_code excluded) → 6 rows × 12 fields, source mix existing 8% 
 ## Phase 7 — Save-back loop  🎯
 *Goal: persist chosen datasets and close the reuse loop.*
 
-- [ ] `nodes/persist.py` — on `save=true`: write dataset (+ label + tags) to MongoDB and **upsert**
-      into ChromaDB for future retrieval; local JSON fallback. 🔒 no Neo4j, no `KG_SIGNAL_*`.
-- [ ] Backend `/persist` — `{session_id, save, label?, tags?}` → calls `persist` when `save=true`.
-- [ ] `PersistGate.jsx` (new) — label + tags + Save/Skip.
-- [ ] Verify the loop: save as `order_flow_v2` → re-run → `mongo_lookup` now finds it.
+- [x] `nodes/persist.py` — `write_dataset()` writes the dataset (label + tags + field→values) to
+      **MongoDB** (`MONGODB_URI`) or a local seed in `data/sample_mongo/` (same dir `mongo_lookup`
+      reads — closes the loop) and **upserts** the case into **ChromaDB**. 🔒 no Neo4j, no `KG_SIGNAL_*`.
+      The graph `persist` node only writes if `persist_decision` is pre-set (gate is the endpoint).
+- [x] Backend `POST /persist` — `{session, save, label, tags}` reads the session's `final_dataset`
+      from the checkpoint and calls `write_dataset` when `save` is truthy; else `{"saved": false}`.
+- [x] `PersistGate.jsx` — label + tags + Save/Skip; shows the save receipt (location + Chroma index).
+- [x] Verified the loop: `write_dataset(... "order_flow_v2")` → `mongo_lookup` finds `order_flow_v2`
+      on a fresh state (`test_persist`), plus backend `/persist` save + skip tests.
 
-**Done when:** a generated dataset can be saved and is reused by `mongo_lookup`/`vector_search` on the next run.
+**Done when:** a generated dataset can be saved and is reused by `mongo_lookup`/`vector_search` on the next run. ✅
+**Verified:** 27 tests pass; frontend builds.
 
 ---
 
 ## Phase 8 — Tests, polish, demo dry-run  🎯
-- [ ] Unit tests per node; integration test (full pipeline; review interrupt/resume; persist loop).
-- [ ] Adversarial: empty MongoDB (LLM-only path), no result files (unseeded), malformed inputs, no Chroma.
-- [ ] One-command startup + README refresh; rehearse the pivot §13 demo story end-to-end.
+- [x] Unit tests per node + integration test (`test_integration.py`: full pipeline interrupt/resume,
+      save→reuse loop, unseeded-when-no-results).
+- [x] Adversarial (`test_adversarial.py`): malformed JSON/XML, no result files (unseeded), MongoDB
+      unreachable, ChromaDB missing — all degrade with gap notes, no crash.
+- [x] Polish: silenced the LangGraph msgpack forward-compat warnings; refreshed README + run_demo
+      launchers for v2 (two-bucket inputs).
+- [x] Dry-run: CLI (`python -m test_data_mining.graph --input data/sample_upload`) and the realistic
+      backend end-to-end both run clean — 27 gaps, mixed-set selection → CSV, save→reuse.
 
-**Done when:** the demo story runs start-to-finish on a clean checkout without manual fixups.
+**Done when:** the demo story runs start-to-finish on a clean checkout without manual fixups. ✅
+**Verified:** 35 tests pass, 0 warnings; frontend builds; CLI + API dry-runs clean.
+**Known limitation:** `synthesise` zips chosen sets into rows but doesn't enforce cross-field
+scenario coherence (a row may pair a valid email with a boundary order_total) — fixed in Phase 9.
+
+---
+
+## Phase 9 — Additive + schema-agnostic output fix  🎯
+*Goal: fix the headline output defects (50 rows in → 6 placeholder rows out). Authoritative spec:*
+*[`IMPROVEMENT.md`](IMPROVEMENT.md). Make the agent additive, always-larger, schema-agnostic, and*
+*LLM-coherent — without hardcoding any column names.*
+
+> 🔒 **New invariants (CLAUDE.md #7–10):** additive (never subtractive) · always larger
+> (`output > input`) · schema-agnostic (output columns == uploaded columns, no hardcoded names) ·
+> coherent new rows (LLM generates each row whole). These join the existing six.
+
+- [x] `parse.py` — emits `input_rows` (full raw rows, verbatim), `input_columns` (exact names/order),
+      `input_row_count` into state (new `state.py` keys). `_select_primary()` picks the upload's
+      primary table (most rows wins; merges files sharing identical headers); `.txt`/schema-only
+      inputs contribute fields but no rows. The originals survive to `synthesise`.
+- [x] `synthesise.py` (rewritten) — output = `input_rows` (untouched) **+** new rows appended.
+      Deleted `_MAX_ROWS`/the `n = min(max(...))` cap. Uses `input_columns` for every row (falls back
+      to chosen field names only when there's no tabular upload). Tags `scenario_tag`/`data_category`
+      **only if** those columns exist. Generates each new row **whole via the LLM** (`_llm_rows_by_type`:
+      prompt = input columns + sample real rows, per scenario type) for cross-field coherence;
+      per-column deterministic fallback (`_det_row`) offline. Guard `assert len(final_dataset) >
+      input_row_count`. `EXPANSION_FACTOR = 3` (optional ~3× target).
+- [x] `generate.py` — raised `_MAX` 6 → 24; removed `_GENERIC` `sample_value_*` placeholders;
+      added schema-agnostic per-column `_synth()` (constraint/category-driven) for unknown fields
+      (demo `_VALID/_NEGATIVE/_BOUNDARY/_EDGE` tables kept only as a deterministic seed for known
+      names); added `_is_placeholder()` guard rejecting `sample_value_*` / `generated_\d+` / `test_*`
+      from seed/existing/retrieved data.
+- [x] `generate_fixtures.py` — `--source <file>.csv` arg (default `tdm_demo_output.csv`); derives
+      reused fields via `_reused_fields()`; optional identity dataset only when those fields exist;
+      `_assert_no_placeholders()` after seeding.
+- [x] **No change:** `coverage_gap.py`, `mongo_lookup.py`, `vector_search.py`, `review.py`, `persist.py`.
+- [x] New acceptance suite `tests/test_additive_output.py` (7 tests): larger+additive, columns ==
+      upload, no placeholders, honest tags, scenario columns never invented, both modes expand,
+      excluded field keeps its column.
+
+**Done when (acceptance, IMPROVEMENT.md §8):** for any uploaded CSV, Mode A (with XML) and Mode B
+(without): `output_rows > input_rows`; every original row appears unchanged; no dedupe/clean/reformat;
+output columns == uploaded columns exactly (any count/names, same order); when `data_category` exists,
+new rows span valid/boundary/negative/edge and are honestly tagged (never `generated_NNN`); zero
+`sample_value_*` placeholders; LLM rows internally coherent; expands in both modes. ✅
+**Verified:** 42 tests pass (35 existing + 7 new). CLI dry-run on the seeded demo: **20 rows in →
+60 out** (20 original preserved + 40 generated), 14 columns intact. LLM whole-row path confirmed via
+a stub (originals verbatim, generated rows coherent, honest `valid_001`/`valid` tags enforced).
 
 ---
 
@@ -198,5 +256,6 @@ coverage_gap → generate → graph → backend/mine → ReviewGate → ReportVi
 
 ---
 
-*References: [`TDM-PIVOT-v2.md`](TDM-PIVOT-v2.md) (authoritative) · [`demo-overview.md`](demo-overview.md)
-(framing) · `tdm_demo_output.csv` (canonical schema) · [`CLAUDE.md`](../CLAUDE.md) (invariants).*
+*References: [`TDM-PIVOT-v2.md`](TDM-PIVOT-v2.md) (authoritative) · [`IMPROVEMENT.md`](IMPROVEMENT.md)
+(Phase 9 fix spec) · [`demo-overview.md`](demo-overview.md) (framing) · `tdm_demo_output.csv`
+(shape reference only) · [`CLAUDE.md`](../CLAUDE.md) (invariants).*

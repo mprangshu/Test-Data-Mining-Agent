@@ -95,3 +95,36 @@ def test_mine_rejects_bad_test_case_ext():
 
 def test_resume_unknown_session_404():
     assert client.post("/resume", data={"session": "nope", "review_selections": "[]"}).status_code == 404
+
+
+def _mine_and_resume():
+    resp = client.post("/mine", files=[
+        ("test_cases", ("order_flow_tests.csv", _TEST_CASES_CSV.encode(), "text/csv")),
+        ("results", ("junit.xml", _JUNIT.encode(), "application/xml")),
+    ])
+    intr = [e for e in _events(resp) if e["type"] == "interrupt"][0]
+    sels = [{"field_name": f["field_name"], "include": True, "chosen_set_id": "gen_A"}
+            for f in intr["payload"]["fields"]]
+    client.post("/resume", data={"session": intr["session"], "review_selections": json.dumps(sels)})
+    return intr["session"]
+
+
+def test_persist_saves_dataset(tmp_path, monkeypatch):
+    monkeypatch.delenv("MONGODB_URI", raising=False)
+    monkeypatch.setenv("MONGO_LOCAL_DIR", str(tmp_path / "mongo"))
+    monkeypatch.setenv("CHROMA_PATH", str(tmp_path / "chroma"))
+    session = _mine_and_resume()
+    r = client.post("/persist", data={"session": session, "save": "true",
+                                      "label": "order_flow_v2", "tags": "order,generated"})
+    body = r.json()
+    assert body["saved"] is True
+    assert body["receipt"]["label"] == "order_flow_v2"
+    assert (tmp_path / "mongo" / "order_flow_v2.json").exists()
+
+
+def test_persist_skip_does_not_save(tmp_path, monkeypatch):
+    monkeypatch.delenv("MONGODB_URI", raising=False)
+    monkeypatch.setenv("MONGO_LOCAL_DIR", str(tmp_path / "mongo"))
+    session = _mine_and_resume()
+    body = client.post("/persist", data={"session": session, "save": "false"}).json()
+    assert body == {"saved": False}

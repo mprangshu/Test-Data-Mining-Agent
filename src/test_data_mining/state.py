@@ -105,6 +105,9 @@ class AgentState(TypedDict, total=False):
     input_path: str
 
     parsed_fields: list[ParsedField]            # parse
+    input_rows: list[dict[str, Any]]            # parse — original uploaded rows, VERBATIM
+    input_columns: list[str]                    # parse — exact uploaded column names/order
+    input_row_count: int                        # parse — len(input_rows), for the always-larger guard
     result_signals: list[ResultSignal]          # load_results
     seed_values: list[SeedValue]                # load_results
     existing_data: list[ExistingRecord]         # mongo_lookup
@@ -133,6 +136,9 @@ def initial_state(input_path: str) -> AgentState:
     return AgentState(
         input_path=input_path,
         parsed_fields=[],
+        input_rows=[],
+        input_columns=[],
+        input_row_count=0,
         result_signals=[],
         seed_values=[],
         existing_data=[],

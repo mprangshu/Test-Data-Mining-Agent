@@ -22,6 +22,7 @@ stdlib only, except ChromaDB for the vector seed (optional — skipped with a wa
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -33,16 +34,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from test_data_mining.embedding import embed, DeterministicEmbeddingFunction  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CSV_PATH = os.path.join(REPO, "tdm_demo_output.csv")
+DEFAULT_CSV = os.path.join(REPO, "tdm_demo_output.csv")
 DATA = os.path.join(REPO, "data")
 
 META_COLS = {"scenario_tag", "data_category"}
-# Fields whose VALID values MongoDB already stores (to be reused, not regenerated).
-REUSED_FIELDS = ["email", "order_total", "currency", "country"]
+# Preferred fields to pre-store in MongoDB (reused, not regenerated) — used when present in the
+# source; otherwise we fall back to the first few data columns. NEVER a hardcoded schema.
+_PREFERRED_REUSE = ["email", "order_total", "currency", "country"]
 
 
-def _read_rows() -> tuple[list[str], list[dict]]:
-    with open(CSV_PATH, newline="", encoding="utf-8-sig") as f:
+def _read_rows(csv_path: str) -> tuple[list[str], list[dict]]:
+    with open(csv_path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         return list(reader.fieldnames or []), list(reader)
 
@@ -51,12 +53,18 @@ def _data_fields(headers: list[str]) -> list[str]:
     return [h for h in headers if h not in META_COLS]
 
 
+def _reused_fields(data_fields: list[str]) -> list[str]:
+    """Schema-agnostic: prefer the well-known reusable fields when present, else the first few."""
+    preferred = [f for f in _PREFERRED_REUSE if f in data_fields]
+    return preferred if len(preferred) >= 2 else data_fields[:4]
+
+
 # ── primary inputs ────────────────────────────────────────────────────
-def _write_test_cases(tc_dir: str) -> None:
+def _write_test_cases(tc_dir: str, csv_path: str) -> None:
     os.makedirs(tc_dir, exist_ok=True)
-    # The test-case sheet is the canonical CSV itself (headers = required fields; data_category
-    # lists the scenario types). parse() reads it to derive parsed_fields.
-    shutil.copy(CSV_PATH, os.path.join(tc_dir, "order_flow_tests.csv"))
+    # The test-case sheet is the source CSV itself (headers = required fields; data_category
+    # lists the scenario types). parse() reads it to derive parsed_fields + the original rows.
+    shutil.copy(csv_path, os.path.join(tc_dir, os.path.basename(csv_path)))
     with open(os.path.join(tc_dir, "login_flow_tests.txt"), "w", encoding="utf-8") as f:
         f.write(
             "Feature: Login\n\n"
@@ -115,15 +123,18 @@ def _write_playwright(path: str, passing: list[dict], data_fields) -> None:
 
 
 # ── MongoDB seed (local JSON) ─────────────────────────────────────────
-def _write_mongo(mongo_dir: str, valid_rows: list[dict]) -> list[dict]:
+def _write_mongo(mongo_dir: str, valid_rows: list[dict], reused_fields: list[str]) -> list[dict]:
     os.makedirs(mongo_dir, exist_ok=True)
     docs = [
         {"test_case_id": "order_flow", "label": "order_flow_v1", "tags": ["order", "checkout", "valid"],
-         "fields": {f: [r[f] for r in valid_rows if r.get(f)] for f in REUSED_FIELDS}},
-        {"test_case_id": "customer_profile", "label": "customer_profiles_v1", "tags": ["identity", "valid"],
-         "fields": {"email": [r["email"] for r in valid_rows if r.get("email")],
-                    "customer_name": [r["customer_name"] for r in valid_rows if r.get("customer_name")]}},
+         "fields": {f: [r[f] for r in valid_rows if r.get(f)] for f in reused_fields}},
     ]
+    # Optional second dataset built only from identity-ish fields that actually exist (no hardcoding).
+    identity = [f for f in ("email", "customer_name", "username", "name") if any(r.get(f) for r in valid_rows)]
+    if identity:
+        docs.append(
+            {"test_case_id": "customer_profile", "label": "customer_profiles_v1", "tags": ["identity", "valid"],
+             "fields": {f: [r[f] for r in valid_rows if r.get(f)] for f in identity}})
     for d in docs:
         with open(os.path.join(mongo_dir, f"{d['label']}.json"), "w", encoding="utf-8") as f:
             json.dump(d, f, indent=2)
@@ -157,21 +168,38 @@ def _seed_chroma(chroma_dir: str, docs: list[dict]) -> bool:
 
 
 # ── main ──────────────────────────────────────────────────────────────
-def main() -> None:
-    if not os.path.exists(CSV_PATH):
-        raise SystemExit(f"Canonical CSV not found: {CSV_PATH}")
-    headers, rows = _read_rows()
+def _assert_no_placeholders(docs: list[dict]) -> None:
+    """Fail loudly if a `sample_value_*` placeholder leaked into the MongoDB seed (IMPROVEMENT.md §6)."""
+    for d in docs:
+        for vals in d["fields"].values():
+            for v in vals:
+                if str(v).strip().lower().startswith("sample_value_"):
+                    raise SystemExit(f"placeholder leaked into seed {d['label']}: {v!r}")
+
+
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(description="Seed v2 demo fixtures from a source CSV (any schema).")
+    ap.add_argument("--source", default=DEFAULT_CSV,
+                    help="source CSV (columns = fields; data_category column = scenario types). "
+                         f"Default: {os.path.relpath(DEFAULT_CSV, REPO)}")
+    args = ap.parse_args(argv)
+    csv_path = os.path.abspath(args.source)
+
+    if not os.path.exists(csv_path):
+        raise SystemExit(f"Source CSV not found: {csv_path}")
+    headers, rows = _read_rows(csv_path)
     data_fields = _data_fields(headers)
+    reused_fields = _reused_fields(data_fields)
 
     by_cat: dict[str, list[dict]] = {}
     for r in rows:
-        by_cat.setdefault(r["data_category"], []).append(r)
+        by_cat.setdefault(r.get("data_category", "valid"), []).append(r)
     valid = by_cat.get("valid", [])
     negative = by_cat.get("negative", [])
 
     upload = os.path.join(DATA, "sample_upload")
     shutil.rmtree(upload, ignore_errors=True)
-    _write_test_cases(os.path.join(upload, "test_cases"))
+    _write_test_cases(os.path.join(upload, "test_cases"), csv_path)
 
     mid = len(valid) // 2
     _write_junit(os.path.join(upload, "results", "junit.xml"),
@@ -179,12 +207,13 @@ def main() -> None:
     _write_playwright(os.path.join(upload, "results", "playwright.json"),
                       passing=valid[mid:], data_fields=data_fields)
 
-    docs = _write_mongo(os.path.join(DATA, "sample_mongo"), valid)
+    docs = _write_mongo(os.path.join(DATA, "sample_mongo"), valid, reused_fields)
+    _assert_no_placeholders(docs)
     chroma_ok = _seed_chroma(os.path.join(DATA, "sample_chroma"), docs)
 
     golden = {
         "all_fields": data_fields,
-        "reused_fields": REUSED_FIELDS,                 # mongo_lookup should return these
+        "reused_fields": reused_fields,                 # mongo_lookup should return these
         "exercised_scenarios": ["valid", "negative"],   # present in result files
         "gap_scenario_types": ["boundary", "edge"],     # absent in results → coverage gaps
     }
@@ -192,10 +221,10 @@ def main() -> None:
     with open(os.path.join(DATA, "golden", "expectations_v2.json"), "w", encoding="utf-8") as f:
         json.dump(golden, f, indent=2)
 
-    print(f"Generated v2 fixtures from {os.path.basename(CSV_PATH)}:")
-    print(f"  test cases   -> {upload}/test_cases ({len(data_fields)} fields)")
+    print(f"Generated v2 fixtures from {os.path.basename(csv_path)}:")
+    print(f"  test cases   -> {upload}/test_cases ({len(data_fields)} fields, {len(rows)} rows)")
     print(f"  results      -> {upload}/results (valid pass: {len(valid)}, negative fail: {len(negative)})")
-    print(f"  MongoDB seed -> {DATA}/sample_mongo ({len(docs)} datasets, reused fields {REUSED_FIELDS})")
+    print(f"  MongoDB seed -> {DATA}/sample_mongo ({len(docs)} datasets, reused fields {reused_fields})")
     print(f"  ChromaDB     -> {'seeded' if chroma_ok else 'SKIPPED'} at {DATA}/sample_chroma")
     print(f"  golden       -> {DATA}/golden/expectations_v2.json (gaps: boundary, edge)")
 

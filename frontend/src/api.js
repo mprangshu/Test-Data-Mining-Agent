@@ -45,3 +45,15 @@ export async function resume(session, reviewSelections, onEvent) {
   const resp = await fetch(`${API_BASE}/resume`, { method: "POST", body });
   await consumeNdjson(resp, onEvent);
 }
+
+/** Persist gate: save the session's generated dataset to MongoDB + ChromaDB. */
+export async function persistDataset(session, { save, label, tags }) {
+  const body = new FormData();
+  body.append("session", session);
+  body.append("save", save ? "true" : "false");
+  body.append("label", label || "");
+  body.append("tags", (tags || []).join(","));
+  const resp = await fetch(`${API_BASE}/persist`, { method: "POST", body });
+  if (!resp.ok) throw new Error(await readErrorDetail(resp));
+  return resp.json();
+}
