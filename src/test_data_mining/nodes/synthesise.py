@@ -140,8 +140,11 @@ def _perturb(base, stype, data_cols, profiles, pools, minter, corr, idx) -> dict
             p = profiles[c]
             row[c] = _fmt_num(p.num_min if idx % 2 == 0 else p.num_max, p.numeric_is_int)
     elif stype == "negative":
-        # corrupt exactly ONE field — empty the most-likely-required (highest fill) column
-        ranked = sorted((c for c in data_cols if profiles[c].fill_rate > 0),
+        # corrupt exactly ONE field — empty the most-likely-required (highest fill) column.
+        # Never empty an id-like/primary-key column: it was just minted unique above, and a null
+        # PK collides across negatives + breaks downstream tools (FIXES-seed §2, Option A). Express
+        # invalidity in some OTHER field; id-like columns keep their fresh unique id.
+        ranked = sorted((c for c in data_cols if profiles[c].fill_rate > 0 and not minter.is_id(c)),
                         key=lambda c: profiles[c].fill_rate, reverse=True)
         if ranked:
             row[ranked[idx % min(len(ranked), 3)]] = ""

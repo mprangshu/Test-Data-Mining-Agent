@@ -65,7 +65,8 @@ These are hard rules. Code that breaks one is a bug.
    so cross-field relationships hold. LLM path infers relationships from example rows; offline
    fallback clones a real row and perturbs only what the scenario needs.
 9. **Unique ids.** Id-like columns get freshly minted ids continuing the observed pattern
-   (`SUB-051…`); a generated/fetched/gathered row never reuses an existing id.
+   (`SUB-051…`); a generated/fetched/gathered row never reuses an existing id. The primary key is
+   **never nulled** — even negative rows keep a fresh unique id (invalidity goes in another field).
 10. **Provenance is UI-only.** `source` rides alongside rows in the API (`output_rows`); the
     exported CSV (`final_dataset`) is clean — original columns only.
 11. **LLM via the seam, with a deterministic fallback.** Any LLM use goes through `llm.py`
@@ -120,8 +121,9 @@ uploaded example rows **plus** known real values per column merged from the anal
   infers types and inter-column relationships and emits fresh whole rows per scenario.
 - **Offline fallback** (`synthesise._perturb`): clone a real row, perturb only what the scenario
   needs — valid=clone (+refresh datetimes); boundary=numeric min/max; negative=empty one high-fill
-  field; edge=one unusual observed value (carrying correlated partners via learned co-occurrence).
-  Coherence comes from the cloned real row, not from rules.
+  field **but never the id/primary-key column** (ids stay minted unique — a negative row is invalid
+  in some *other* field, never via a null PK); edge=one unusual observed value (carrying correlated
+  partners via learned co-occurrence). Coherence comes from the cloned real row, not from rules.
 
 **Data-driven inference** (`inference.py`, zero domain knowledge): classifies each column by content
 (`numeric|datetime|id|categorical|freetext`), detects id patterns and mints unique ids, measures
@@ -143,8 +145,10 @@ increments `round_index`, and regenerates everything else grounded on them (**re
 ## 5. Stores, embeddings, LLM
 
 - **MongoDB** (documents) — existing datasets `{test_case_id, label, tags, fields (column pools),
-  rows (row-aligned), …}`. Live via `MONGODB_URI`, else a local JSON seed in `data/sample_mongo/`
-  (the same dir `persist` writes to → closes the reuse loop offline).
+  rows (row-aligned), …}`. `fields` is the matching subset; **`rows` carry every source column
+  populated**, so the fetched/gathered rows surfaced downstream are complete records, not 2-field
+  stubs. Live via `MONGODB_URI`, else a local JSON seed in `data/sample_mongo/` (the same dir
+  `persist` writes to → closes the reuse loop offline).
 - **ChromaDB** (vectors) — similar datasets, embedded from a descriptive context (title + tags +
   field names + sample values). Local persistent store at `data/sample_chroma/` (`CHROMA_PATH`).
 - **Embeddings** — `all-MiniLM-L6-v2` (384-dim) via `sentence-transformers`, loaded **offline** from

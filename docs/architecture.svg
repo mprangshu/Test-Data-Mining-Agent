@@ -18,14 +18,14 @@
   <text x="24" y="34" class="hd">Test Data Mining Agent — v3 architecture (LangGraph · test-data generation)</text>
   <text x="24" y="54" class="lab">parse → load_results → mongo_lookup → vector_search → coverage_gap → generate → review (HITL) → synthesise → persist</text>
 
-  <!-- Inputs -->
-  <rect x="24" y="78" width="220" height="46" rx="8" fill="#e0e7ff" stroke="#6366f1"/>
-  <text x="36" y="98" class="t">Primary: test cases / stories</text>
-  <text x="36" y="114" class="s">.xlsx .csv .json .txt (Gherkin)</text>
+  <!-- Inputs (side by side, above the pipeline start) -->
+  <rect x="24" y="86" width="250" height="46" rx="8" fill="#e0e7ff" stroke="#6366f1"/>
+  <text x="36" y="106" class="t">Primary: test cases / stories</text>
+  <text x="36" y="122" class="s">.xlsx .csv .json .txt (Gherkin)</text>
 
-  <rect x="24" y="132" width="220" height="46" rx="8" fill="#e0e7ff" stroke="#6366f1"/>
-  <text x="36" y="152" class="t">Supporting: test results</text>
-  <text x="36" y="168" class="s">JUnit .xml · Playwright .json</text>
+  <rect x="300" y="86" width="250" height="46" rx="8" fill="#e0e7ff" stroke="#6366f1"/>
+  <text x="312" y="106" class="t">Supporting: test results</text>
+  <text x="312" y="122" class="s">JUnit .xml · Playwright .json</text>
 
   <!-- Pipeline nodes (row at y=250) : x = 24 + i*128, w=116, h=64 -->
   <g>
@@ -69,10 +69,10 @@
     <line x1="1036" y1="282" x2="1046" y2="282"/>
   </g>
 
-  <!-- inputs into parse/load_results -->
+  <!-- inputs into parse / load_results -->
   <g stroke="#6366f1" stroke-width="1.4" marker-end="url(#arrow)" fill="none">
-    <path d="M244,101 C300,101 60,180 82,248"/>
-    <path d="M244,155 C300,180 180,200 200,248"/>
+    <path d="M149,132 C120,175 92,212 82,248"/>
+    <path d="M425,132 C360,178 250,212 210,248"/>
   </g>
 
   <!-- HITL interrupt/resume -->
@@ -104,9 +104,11 @@
   <rect x="700" y="392" width="150" height="50" rx="9" fill="#fff7ed" stroke="#fb923c" stroke-dasharray="4 3"/>
   <text x="712" y="414" class="t">Gemini (optional)</text><text x="712" y="430" class="s">LLM seam · det. fallback</text>
 
-  <!-- persist write-back -->
-  <path d="M1080,314 C1080,360 470,360 396,392" stroke="#475569" stroke-width="1.2" fill="none" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
-  <text x="980" y="338" class="s">persist (save=true) → write back</text>
+  <!-- persist write-back (save=true → both stores), routed around the output box, in below the store row -->
+  <path d="M1156,290 L1170,290 L1170,460 L320,460" stroke="#475569" stroke-width="1.2" fill="none" stroke-dasharray="3 3"/>
+  <path d="M338,460 L338,444" stroke="#475569" stroke-width="1.2" fill="none" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+  <path d="M466,460 L466,444" stroke="#475569" stroke-width="1.2" fill="none" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+  <text x="560" y="456" class="s">persist (save=true) → writes back to MongoDB + ChromaDB</text>
 
   <!-- Legend -->
   <text x="24" y="528" class="lab" font-weight="700">Legend</text>

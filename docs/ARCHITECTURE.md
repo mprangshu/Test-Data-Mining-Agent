@@ -71,8 +71,8 @@ values from **passing** runs only). No results dir → empty + an "unseeded" gap
 ### `mongo_lookup` — deterministic, READ-ONLY — `nodes/mongo_lookup.py`
 Matches stored datasets to the parsed fields (field-name overlap or test-case id). Live via
 `MONGODB_URI`, else local JSON in `data/sample_mongo/` (`MONGO_LOCAL_DIR`). Each record carries
-column pools (`fields`) **and** row-aligned `rows` (coherent reuse + provenance). Unreachable/empty →
-`[]` + gap.
+column pools (`fields`, the matching subset) **and** complete row-aligned `rows` (every column
+populated → fetched rows downstream are full records, not stubs). Unreachable/empty → `[]` + gap.
 **Writes:** `existing_data` (the **fetched** source), `gaps`.
 
 ### `vector_search` — vector (ChromaDB), READ-ONLY — `nodes/vector_search.py`
@@ -107,6 +107,8 @@ The assembler. Output = **`input_rows` (verbatim) + generated + fetched + gather
 - Generated rows are coherent whole records — LLM-grounded (`_llm_rows`) or offline clone-and-perturb
   (`_perturb`), grounded on originals + analyst picks + fetched + gathered (observed value pools).
 - Uses `inference.profile_columns` + `IdMinter` (unique ids) + learned `correlated_pairs`.
+- Negative rows empty one high-fill field **but never the id/primary-key column** (ids stay minted
+  unique; invalidity goes in another field — FIXES-seed §2 Option A).
 - Scenario mix always includes valid; `scenario_tag`/`data_category` written only if present, tag =
   content. Row count relaxed: `n_new = max(input_n, 5)`, guard `output ≥ input`.
 - Emits `final_dataset` (clean, fields only) and `output_rows` (with `source` + `row_uid`).

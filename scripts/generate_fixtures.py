@@ -141,8 +141,11 @@ def _dataset_doc(*, test_case_id, label, title, description, tags,
     and downstream grounding without hardcoding any column name."""
     fields = {f: _dedupe([r[f] for r in valid_rows if r.get(f)]) for f in field_names}
     fields = {f: v for f, v in fields.items() if v}                 # drop fields with no values
-    # Row-aligned records (coherent) — the actual reusable rows, restricted to the stored fields.
-    rows = [{f: r.get(f, "") for f in fields} for r in valid_rows]
+    # Row-aligned records (coherent) — the actual reusable rows. `fields` above is the matching
+    # subset (column pools); `rows` carry EVERY source column populated, so fetched/gathered rows
+    # surfaced downstream are complete records, not 2-field stubs (FIXES-seed §1). Schema-agnostic:
+    # we keep whatever columns the source CSV has, never a hardcoded list.
+    rows = [{c: r.get(c, "") for c in all_columns} for r in valid_rows]
     return {
         # ── identity (test-case specific) ──
         "test_case_id": test_case_id,

@@ -101,6 +101,8 @@ flowchart TD
   no column names hardcoded.
 - **valid** rows stay coherent (clone); **boundary/negative/edge** perturb minimally; **edge** swaps
   carry correlated partners (learned co-occurrence) so links like country↔currency survive.
+- **negative** rows empty one high-fill field but **never the id/primary-key column** — the PK is
+  never nulled; invalidity is expressed in another field (ids stay minted unique).
 - Guarantees: originals verbatim & first; output ≥ input; unique ids; mostly-empty stays empty.
 
 ---

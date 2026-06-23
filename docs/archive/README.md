@@ -17,5 +17,6 @@ them as current** — the authoritative context is [`../CONTEXT.md`](../CONTEXT.
 | `IMPROVEMENT-2.md` | coherence/universality fix spec — implemented | `../CONTEXT.md` |
 | `CONTEXT-v3.md` | v3 spec (provenance, iteration, real embeddings) — implemented | `../CONTEXT.md` |
 | `BUILD-PLAN-v3.md` | v3 phase plan (Phases 0–8) — all done | `../CONTEXT.md` |
+| `FIXES-seed-and-negatives.md` | two data-quality fixes (full seed rows; negatives never null the PK) — implemented | `../CONTEXT.md` §4–5 |
 
 The design decisions in these files now live, in their final form, in the active docs.
