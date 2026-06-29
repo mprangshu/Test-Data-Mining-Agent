@@ -33,7 +33,7 @@ from test_data_mining.state import initial_state               # noqa: E402
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_TEXT_BYTES = 10 * 1024 * 1024
-MAX_FILES = 200
+MAX_FILES = 20
 TEST_CASE_EXTS = {".xlsx", ".csv", ".json", ".txt"}
 RESULT_EXTS = {".xml", ".json"}
 UPLOADS_ROOT = os.path.join(_REPO, "data", "_uploads")
