@@ -9,12 +9,12 @@ const SOURCES = {
   gathered:  { label: "Gathered",  row: "bg-amber-50/60", badge: "bg-amber-100 text-amber-800",   dot: "bg-amber-500" },
 };
 const SOURCE_ORDER = ["input", "generated", "fetched", "gathered"];
-const PREVIEW = 15;
 
 // Renders the generated dataset with per-row provenance (source colour/badge + legend + filter).
 export default function ReportView({ result, onGenerateMore, generating = false }) {
   const [filter, setFilter] = useState("all");
   const [selected, setSelected] = useState(() => new Set());
+  const [colWidths, setColWidths] = useState({});   // Excel-style per-column widths (px); UI-only
   const { report = {}, final_dataset: rows = [], coverage_gaps: gaps = [], meta = {}, errors = [] } = result || {};
 
   // Prefer output_rows (carry provenance); fall back to the clean dataset tagged generic.
@@ -35,7 +35,6 @@ export default function ReportView({ result, onGenerateMore, generating = false 
   if (!result) return null;
   const cols = report.columns || (outRows[0] ? Object.keys(outRows[0].fields) : []);
   const filtered = filter === "all" ? outRows : outRows.filter((r) => r.source === filter);
-  const preview = filtered.slice(0, PREVIEW);
   const present = SOURCE_ORDER.filter((s) => counts[s]);
 
   const selectable = typeof onGenerateMore === "function";
@@ -54,6 +53,27 @@ export default function ReportView({ result, onGenerateMore, generating = false 
   const runGenerateMore = () => {
     const picked = outRows.filter((r) => selected.has(r.row_uid)).map((r) => r.fields);
     if (picked.length) onGenerateMore(picked);
+  };
+
+  // Excel-style column resizing: drag a header's right edge to set that column's width (px, UI-only).
+  // Default width is sized to the COLUMN HEADING's length (clamped); a manual drag overrides it.
+  const W_FILL = 44, W_CHECK = 36, W_SOURCE = 78;
+  const headerWidth = (name) => Math.min(240, Math.max(64, String(name).length * 8 + 22));
+  const widthFor = (c) => colWidths[c] ?? headerWidth(c);
+  const totalWidth = W_FILL + (selectable ? W_CHECK : 0) + W_SOURCE + cols.reduce((a, c) => a + widthFor(c), 0);
+  const startResize = (e, col) => {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX;
+    const startW = widthFor(col);
+    const onMove = (ev) => setColWidths((p) => ({ ...p, [col]: Math.max(60, startW + ev.clientX - startX) }));
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = ""; document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none";
   };
 
   return (
@@ -126,28 +146,44 @@ export default function ReportView({ result, onGenerateMore, generating = false 
         </div>
       )}
 
-      {preview.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="text-xs border-collapse">
-            <thead className="text-left text-slate-500 border-b">
+      {filtered.length > 0 && (
+        <div className="max-h-[28rem] overflow-auto rounded-lg border border-slate-200">
+          <table className="table-fixed border-collapse text-xs" style={{ width: totalWidth }}>
+            <thead className="sticky top-0 z-10 bg-white text-left text-slate-500 shadow-[0_1px_0_0_#e2e8f0]">
               <tr>
+                <th style={{ width: W_FILL }} className="bg-white px-2 py-1.5" title="Row completeness (UI only — not exported)">filled</th>
                 {selectable && (
-                  <th className="py-1.5 px-2">
+                  <th style={{ width: W_CHECK }} className="bg-white px-2 py-1.5">
                     <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered}
                            title="Select all rows in the current filter" />
                   </th>
                 )}
-                <th className="py-1.5 px-2">source</th>
-                {cols.map((c) => <th key={c} className="py-1.5 px-2 whitespace-nowrap">{c}</th>)}
+                <th style={{ width: W_SOURCE }} className="bg-white px-2 py-1.5">source</th>
+                {cols.map((c) => (
+                  <th key={c} style={{ width: widthFor(c) }}
+                      className="relative select-none bg-white px-2 py-1.5">
+                    <span className="block overflow-hidden text-ellipsis whitespace-nowrap pr-1">{c}</span>
+                    <span onMouseDown={(e) => startResize(e, c)} title="Drag to resize column"
+                          className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-accent/40" />
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {preview.map((r) => {
+              {filtered.map((r) => {
                 const meta_ = SOURCES[r.source] || SOURCES.generated;
                 const checked = selected.has(r.row_uid);
+                const missing = cols.filter((c) => String(r.fields[c] ?? "").trim() === "");
+                const complete = missing.length === 0;
                 return (
                   <tr key={r.row_uid}
                       className={`border-b border-slate-100 ${meta_.row} ${checked ? "ring-1 ring-inset ring-accent/40" : ""}`}>
+                    <td className="px-2 py-1">
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${complete ? "bg-green-500" : "bg-amber-400"}`}
+                        title={complete ? "Complete — all fields filled" : `Missing ${missing.length}: ${missing.join(", ")}`}
+                      />
+                    </td>
                     {selectable && (
                       <td className="py-1 px-2">
                         <input type="checkbox" checked={checked} onChange={() => toggleRow(r.row_uid)} />
@@ -159,18 +195,27 @@ export default function ReportView({ result, onGenerateMore, generating = false 
                       </span>
                     </td>
                     {cols.map((c) => (
-                      <td key={c} className="py-1 px-2 whitespace-nowrap font-mono">{String(r.fields[c] ?? "")}</td>
+                      <td key={c} style={{ width: widthFor(c), maxWidth: widthFor(c) }}
+                          title={String(r.fields[c] ?? "")}
+                          className="overflow-hidden text-ellipsis whitespace-nowrap px-2 py-1 font-mono">
+                        {String(r.fields[c] ?? "")}
+                      </td>
                     ))}
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          {filtered.length > preview.length && (
-            <p className="text-xs text-slate-400 mt-1">
-              … {filtered.length - preview.length} more {filter === "all" ? "" : `${filter} `}rows in the download.
-            </p>
-          )}
+        </div>
+      )}
+      {filtered.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400">
+          <span>Showing all {filtered.length} {filter === "all" ? "" : `${filter} `}row{filtered.length === 1 ? "" : "s"} — scroll to see more; drag a column's right edge to resize.</span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-full bg-green-500" /> all fields filled
+            <span className="ml-2 inline-block h-2.5 w-2.5 rounded-full bg-amber-400" /> some values empty
+            <span className="ml-1">(fill indicator is UI-only — not exported)</span>
+          </span>
         </div>
       )}
 
