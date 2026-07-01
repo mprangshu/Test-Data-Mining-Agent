@@ -25,22 +25,27 @@ _CATEGORICAL_MAX = 15        # ≤ this many distinct values → treat as an enu
 
 
 def _s(v) -> str:
+    # Normalise any value to a stripped string.
     return str(v).strip()
 
 
 def _nonempty(values) -> list[str]:
+    # Return only the non-empty string values from the input sequence.
     return [_s(v) for v in values if _s(v) != ""]
 
 
 def is_number(v) -> bool:
+    # Detect numeric strings including decimals, ignoring commas.
     return bool(_FLOAT_RE.match(_s(v).replace(",", "")))
 
 
 def is_integer(v) -> bool:
+    # Detect integer strings, ignoring commas.
     return bool(_INT_RE.match(_s(v).replace(",", "")))
 
 
 def is_datetime(v) -> bool:
+    # Detect ISO-like date/time strings.
     return bool(_DATE_RE.match(_s(v)))
 
 
@@ -65,6 +70,7 @@ def id_pattern(values) -> tuple[str, int, int] | None:
     prefix = next(iter(prefixes))
     width = max(len(m.group("num")) for m in matches)
     max_num = max(int(m.group("num")) for m in matches)
+    # Return the id prefix, padding width, and current max sequence number.
     return prefix, width, max_num
 
 
@@ -104,6 +110,7 @@ class ColProfile:
 
 
 def profile_column(name: str, values) -> ColProfile:
+    # Build a profile from the raw column values and detect special types.
     all_vals = list(values)
     ne = _nonempty(all_vals)
     fill = (len(ne) / len(all_vals)) if all_vals else 0.0
@@ -126,6 +133,7 @@ def profile_column(name: str, values) -> ColProfile:
 
 def profile_columns(rows: list[dict], columns: list[str]) -> dict[str, ColProfile]:
     """Profile every column from the observed rows (schema-agnostic)."""
+    # Profile each requested column over the input row corpus.
     return {c: profile_column(c, [r.get(c, "") for r in rows]) for c in columns}
 
 
@@ -134,6 +142,7 @@ class IdMinter:
     Never reuses an existing value (fixes IMPROVEMENT-2 Defect 5)."""
 
     def __init__(self, profiles: dict[str, ColProfile]):
+        # Initialise minting state for each detected id-like column.
         self._next: dict[str, int] = {}
         self._width: dict[str, int] = {}
         self._prefix: dict[str, str] = {}
@@ -144,9 +153,11 @@ class IdMinter:
                 self._prefix[name] = p.id_prefix
 
     def is_id(self, col: str) -> bool:
+        # Report whether the column is recognised as an id-like sequence.
         return col in self._next
 
     def mint(self, col: str) -> str:
+        # Return the next unique id for the given id-like column.
         n = self._next[col]
         self._next[col] = n + 1
         return f"{self._prefix[col]}{n:0{self._width[col]}d}"
@@ -157,6 +168,7 @@ def cooccurrence(rows: list[dict], col_a: str, col_b: str) -> dict[str, str]:
     IMPROVEMENT-2 §2c). Used only by the offline fallback to preserve correlations like
     country↔currency — for *whatever* columns happen to correlate in THIS dataset."""
     pairs: dict[str, Counter] = defaultdict(Counter)
+    # Count the most frequent value of col_b for each seen value of col_a.
     for r in rows:
         a, b = _s(r.get(col_a, "")), _s(r.get(col_b, ""))
         if a and b:
@@ -170,6 +182,7 @@ def correlated_pairs(rows: list[dict], profiles: dict[str, ColProfile],
     Direction (a→b) means: given a's value, b is almost always the same. Schema-agnostic."""
     cats = [c for c, p in profiles.items() if p.ctype == "categorical"]
     out: list[tuple[str, str]] = []
+    # Identify categorical column pairs with strong predictive co-occurrence.
     for a in cats:
         for b in cats:
             if a == b:

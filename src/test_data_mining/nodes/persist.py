@@ -25,18 +25,22 @@ _META_COLS = {"scenario_tag", "data_category"}
 
 
 def _mongo_dir() -> str:
+    # Local fallback directory for persisted Mongo-style JSON seed files.
     return os.environ.get("MONGO_LOCAL_DIR", os.path.join(_REPO, "data", "sample_mongo"))
 
 
 def _chroma_path() -> str:
+    # Path for persistent ChromaDB storage used by vector_search later.
     return os.environ.get("CHROMA_PATH", os.path.join(_REPO, "data", "sample_chroma"))
 
 
 def _safe(label: str) -> str:
+    # Make a filesystem-safe file name from the dataset label.
     return "".join(c if (c.isalnum() or c in "-_") else "_" for c in (label or "dataset"))
 
 
 def _fields_from_rows(rows: list[dict]) -> dict[str, list]:
+    # Extract unique observed values per field, excluding metadata columns.
     out: dict[str, list] = {}
     for r in rows:
         for k, v in r.items():
@@ -54,6 +58,7 @@ def _rows_from_dataset(rows: list[dict]) -> list[dict]:
 
 
 def _upsert_chroma(label: str, fields: dict, rows: list[dict], tags: list[str], gaps: list[str]) -> bool:
+    # Insert or update a ChromaDB case so the generated dataset can be found by subsequent searches.
     try:
         import chromadb
 
@@ -76,7 +81,11 @@ def _upsert_chroma(label: str, fields: dict, rows: list[dict], tags: list[str], 
 
 
 def write_dataset(final_dataset: list[dict], label: str, tags: list[str], report=None) -> dict:
-    """Write the dataset to MongoDB (or local seed) + upsert ChromaDB. Returns a receipt."""
+    """Write the dataset to MongoDB (or local seed) + upsert ChromaDB. Returns a receipt.
+
+    Output example: {"label":"generated_dataset","rows":12,"location":"...","chroma_indexed":True,"gaps":[]}.
+    """
+    # Build a canonical persisted representation and save it to the configured store.
     fields = _fields_from_rows(final_dataset or [])
     rows = _rows_from_dataset(final_dataset or [])
     doc = {
@@ -112,7 +121,11 @@ def write_dataset(final_dataset: list[dict], label: str, tags: list[str], report
 
 
 def persist(state: AgentState) -> dict:
-    """LangGraph node: write only if the save gate was pre-set; otherwise a no-op pass-through."""
+    """LangGraph node: write only if the save gate was pre-set; otherwise a no-op pass-through.
+
+    Called after analyst approval. Output example: {"persist_receipt": {...}, "gaps": [...]} or {}.
+    """
+    # The graph may call this node as an optional sink after the analyst approves saving.
     if not state.get("persist_decision"):
         print("NODE_EXIT persist: save gate not set (no write)")
         return {}

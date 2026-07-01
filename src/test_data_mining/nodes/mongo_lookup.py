@@ -22,6 +22,8 @@ _DEFAULT_LOCAL = os.path.join(
 
 
 def _load_docs() -> tuple[list[dict], list[str]]:
+    # Load stored dataset documents from MongoDB if configured, else from local JSON seed files.
+    # Returns (documents, gaps). If neither source is available, returns [] and a gap note.
     uri = os.environ.get("MONGODB_URI")
     if uri:
         try:
@@ -66,5 +68,7 @@ def mongo_lookup(state: AgentState) -> dict:
                 rows=d.get("rows", []) or [],         # row-aligned records (coherent), when stored
             ))
 
+    # Output shape used by downstream generate/synthesise:
+    # {"existing_data": [ExistingRecord(...)], "gaps": [...]}
     print(f"NODE_EXIT mongo_lookup: {len(existing)} existing dataset(s) matched")
     return {"existing_data": existing, "gaps": gaps}

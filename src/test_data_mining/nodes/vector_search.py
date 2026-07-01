@@ -34,7 +34,7 @@ def vector_search(state: AgentState) -> dict:
     if not fields:
         return {"retrieved_data": [], "gaps": ["vector_search: no parsed fields to query"]}
 
-    # Richer query context (option 2): field names + categories, same shape as the seeded docs.
+    # Build a descriptive query from parsed field names and categories.
     query = context_text([f.name for f in fields],
                          tags=sorted({f.category for f in fields if f.category}))
     default_threshold = _THRESHOLD_BY_EMBEDDER.get(active_embedder_name(), 0.40)
@@ -77,6 +77,8 @@ def vector_search(state: AgentState) -> dict:
             rows=rows or [],
         ))
 
+    # Downstream generate/synthesise use `retrieved_data` as a list of RetrievedRecord objects.
+    # Example output: {"retrieved_data": [RetrievedRecord(...)] , "gaps": []}
     print(f"NODE_EXIT vector_search: {len(retrieved)} similar case(s) "
           f"(>= {threshold}, {active_embedder_name()})")
     return {"retrieved_data": retrieved, "gaps": []}

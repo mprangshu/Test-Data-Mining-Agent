@@ -25,6 +25,7 @@ _PLACEHOLDER = re.compile(r"^(sample_value_\d+|generated_\d+|test_.*)$", re.IGNO
 
 
 def _is_placeholder(v) -> bool:
+    # Detect synthetic placeholder strings that should not be used as real seed data.
     return bool(_PLACEHOLDER.match(str(v).strip()))
 
 
@@ -80,6 +81,7 @@ _TABLE = {"valid": _VALID, "negative": _NEGATIVE, "boundary": _BOUNDARY, "edge":
 
 
 def _dedupe(values: list) -> list:
+    # Preserve order while removing duplicate string-equivalent values.
     seen, out = set(), []
     for v in values:
         key = str(v)
@@ -92,6 +94,8 @@ def _dedupe(values: list) -> list:
 def _synth(field, stype: str) -> list:
     """Schema-agnostic per-column generation (IMPROVEMENT.md §3): plausible values inferred from
     the field's constraints/name when no hardcoded pool matches. Never emits `sample_value_*`."""
+    # Fallback generation when no hardcoded pool exists for the field name.
+    # Returns an example list of values matching the requested scenario type.
     cons = field.constraints
     name = field.name
     if stype == "valid":
@@ -137,6 +141,7 @@ def _synth(field, stype: str) -> list:
 
 def _pool(field, stype: str) -> list:
     """Values for a field × scenario type: hardcoded demo pool if the name matches, else synthesise."""
+    # Use a name-specific hardcoded pool when available; otherwise synthesize.
     pool = _TABLE[stype].get(field.name.lower())
     return list(pool) if pool else _synth(field, stype)
 
@@ -179,6 +184,8 @@ def _llm_valid_values(llm, field, examples: list[str]) -> list[str]:
 
 
 def _aggregate(records, field_name: str) -> list:
+    # Collect values for a field from stored existing/retrieved datasets,
+    # ignoring synthetic placeholder values.
     out = []
     for rec in records:
         out.extend(v for v in rec.fields.get(field_name, []) if not _is_placeholder(v))
@@ -210,6 +217,7 @@ def generate(state: AgentState, llm=None) -> dict:
             valid_vals = [v for v in _pool(f, "valid") if _valid_value(v, f.constraints)] \
                          or _pool(f, "valid")
         note_a = "valid-leaning" + (" (seeded from real data)" if seeded else "")
+        # Add a valid-leaning candidate set.
         sets.append(CandidateSet("gen_A", "generated", _dedupe(valid_vals)[:_MAX], ["valid"], note_a))
 
         # gen_B — gap-filling (targets this field's coverage gaps; else boundary+negative)
@@ -219,9 +227,10 @@ def generate(state: AgentState, llm=None) -> dict:
             if st in targets:
                 gb_vals += _pool(f, st)
                 cover.append(st)
+        # Add a gap-filling candidate set targeting missing scenario types.
         sets.append(CandidateSet("gen_B", "generated", _dedupe(gb_vals)[:_MAX],
-                                 cover or ["boundary", "negative"],
-                                 "gap-filling: " + ", ".join(cover or ["boundary", "negative"])))
+                     cover or ["boundary", "negative"],
+                     "gap-filling: " + ", ".join(cover or ["boundary", "negative"])))
 
         # existing / retrieved pass-through sets
         ex_vals = _aggregate(existing, f.name)
@@ -237,5 +246,6 @@ def generate(state: AgentState, llm=None) -> dict:
         ))
 
     n_llm = "LLM-enriched" if llm is not None else "deterministic"
+    # Return shape: {"candidate_sets": [FieldCandidates(...)]}
     print(f"NODE_EXIT generate: {len(candidate_sets)} fields, {n_llm} candidate sets")
     return {"candidate_sets": candidate_sets}

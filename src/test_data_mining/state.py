@@ -149,6 +149,7 @@ class AgentState(TypedDict, total=False):
 
 def initial_state(input_path: str) -> AgentState:
     """Build a fresh state with v2 defaults (always L2 · HITL)."""
+    # Return the initial AgentState for a new session, with all batched fields empty.
     return AgentState(
         input_path=input_path,
         parsed_fields=[],

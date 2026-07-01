@@ -19,6 +19,7 @@ def coverage_gap(state: AgentState) -> dict:
     fields = state.get("parsed_fields", [])
     signals = state.get("result_signals", [])
 
+    # Build the set of exercised (field, scenario_type) pairs from result files.
     exercised: set[tuple[str, str]] = set()
     for s in signals:
         for fld in s.fields_exercised:
@@ -35,5 +36,6 @@ def coverage_gap(state: AgentState) -> dict:
                     reason=f"no {stype}-scenario value exercised for '{f.name}'",
                 ))
 
+    # Output example: {"coverage_gaps": [CoverageGap(field_name='email', scenario_type='negative', reason='...')]}
     print(f"NODE_EXIT coverage_gap: {len(gaps)} gaps across {len(fields)} fields")
     return {"coverage_gaps": gaps}

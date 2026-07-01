@@ -32,6 +32,8 @@ from .nodes.persist import persist
 
 def build_graph(checkpointer=None):
     """Construct and compile the agent graph (lazy langgraph import)."""
+    # Build the state graph and register each pipeline node in order.
+    # The graph topology is sequential to keep HITL resume behavior clean.
     from langgraph.graph import StateGraph, START, END
 
     g = StateGraph(AgentState)
@@ -71,6 +73,7 @@ def main() -> None:
 
     from langgraph.types import Command
 
+    # Execute the graph once locally, auto-resuming through the review gate for CLI runs.
     graph = build_graph()
     config = {"configurable": {"thread_id": "local-run"}}
     graph.invoke(initial_state(args.input), config=config)

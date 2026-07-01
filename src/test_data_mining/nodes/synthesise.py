@@ -39,6 +39,7 @@ _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 # ── chosen-set resolution (HITL selections; auto-resume falls back to widest coverage) ──
 def _chosen_set(fc: FieldCandidates, sel: ReviewSelection | None) -> CandidateSet | None:
     if sel and sel.chosen_set_id:
+        # If the analyst selected an explicit set, use it, else take widest scenario coverage.
         for s in fc.sets:
             if s.set_id == sel.chosen_set_id:
                 return s
@@ -46,6 +47,8 @@ def _chosen_set(fc: FieldCandidates, sel: ReviewSelection | None) -> CandidateSe
 
 
 def _resolve_chosen(state: AgentState):
+    # Return a map of field -> (values, source, coverage) for the chosen candidate set,
+    # plus a list of excluded fields where the reviewer opted out or no values exist.
     cands = {fc.field_name: fc for fc in state.get("candidate_sets", [])}
     sels = {s.field_name: s for s in state.get("review_selections", [])}
     chosen: dict[str, tuple[list, str, list[str]]] = {}
@@ -68,6 +71,7 @@ def _resolve_chosen(state: AgentState):
 
 # ── observed value pools (originals + analyst picks + fetched + gathered) ──
 def _dedupe(vals: list) -> list:
+    # Preserve input order while removing duplicate values.
     seen, out = set(), []
     for v in vals:
         k = str(v)
@@ -174,6 +178,7 @@ def _strip_fences(text: str) -> str:
 
 
 def _llm_rows(llm, columns, example_rows, pools, stype, n) -> list[dict]:
+    # Provide the model with example rows and known real values so outputs stay grounded.
     hint = {c: pools.get(c, [])[:6] for c in columns}
     prompt = (
         "You are generating synthetic test data.\n"

@@ -25,6 +25,7 @@ def _now() -> str:
 
 def parse_junit(path: str, run_id: str) -> list[TestResult]:
     """Parse a JUnit/TestNG XML file into TestResult records."""
+    # Returns list of TestResult objects keyed by run_id, outcome, and source_format.
     results: list[TestResult] = []
     tree = ET.parse(path)
     root = tree.getroot()
@@ -68,6 +69,7 @@ def parse_junit(path: str, run_id: str) -> list[TestResult]:
 
 def parse_playwright(path: str, run_id: str) -> list[TestResult]:
     """Parse a Playwright JSON reporter file into TestResult records."""
+    # Returns list of TestResult objects keyed by run_id, outcome, and source_format.
     results: list[TestResult] = []
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
@@ -103,6 +105,7 @@ def parse_playwright(path: str, run_id: str) -> list[TestResult]:
 
 def ingest(state: AgentState) -> dict:
     """LangGraph node: discover run_* dirs, parse all sources, normalise."""
+    # This node walks `input_path`, reads every XML/JSON results file, and returns normalized TestResult records.
     input_path = state["input_path"]
     results: list[TestResult] = []
     gaps: list[str] = []
@@ -140,4 +143,5 @@ def ingest(state: AgentState) -> dict:
             r.commit_sha = commit_sha
 
     print(f"NODE_EXIT ingest: parsed {len(results)} results across {len(run_dirs)} runs")
+    # Return shape: {"raw_results": [...], "gaps": [...]}.
     return {"raw_results": results, "gaps": gaps}

@@ -24,6 +24,8 @@ _RESERVED = {"scenario_tag", "scenario_type", "data_category", "test_case_id"}
 
 
 def _infer_scenario(tag: str) -> str:
+    # Infer a scenario type from a scenario tag string.
+    # Example: "missing_email" -> "negative".
     low = (tag or "").lower()
     if any(w in low for w in ("invalid", "missing", "negative", "error", "reject", "declined")):
         return "negative"
@@ -35,6 +37,8 @@ def _infer_scenario(tag: str) -> str:
 
 
 def _seed(seeds: "OrderedDict[str, list]", field_vals: dict) -> None:
+    # Add each field value to a per-field seed list, avoiding duplicates.
+    # Called for passing results only.
     for k, v in field_vals.items():
         seeds.setdefault(k, [])
         if v not in seeds[k]:
@@ -42,6 +46,8 @@ def _seed(seeds: "OrderedDict[str, list]", field_vals: dict) -> None:
 
 
 def _parse_junit(path: str, signals: list, seeds) -> None:
+    # Parse JUnit-style XML; extract test metadata and reserved property values.
+    # Appends ResultSignal entries to `signals` and seeds passing fields.
     root = ET.parse(path).getroot()
     suites = [root] if root.tag == "testsuite" else root.findall(".//testsuite")
     for suite in suites:
@@ -66,6 +72,8 @@ def _parse_junit(path: str, signals: list, seeds) -> None:
 
 
 def _parse_playwright(path: str, signals: list, seeds) -> None:
+    # Parse Playwright JSON reporter output and normalize annotations.
+    # This also supports nested suites via recursion.
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
 
@@ -124,5 +132,7 @@ def load_results(state: AgentState) -> dict:
     if not found:
         gaps.append("load_results: no result files found — generation will be unseeded")
 
+    # Return shape for the graph:
+    # {"result_signals": [ResultSignal(...)], "seed_values": [SeedValue(...)], "gaps": [...]}
     print(f"NODE_EXIT load_results: {len(signals)} signals, {len(seed_values)} seeded fields")
     return {"result_signals": signals, "seed_values": seed_values, "gaps": gaps}

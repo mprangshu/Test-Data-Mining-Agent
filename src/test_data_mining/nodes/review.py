@@ -13,6 +13,8 @@ from ..state import AgentState, FieldCandidates, ReviewSelection
 
 def build_payload(candidate_sets: list[FieldCandidates]) -> dict:
     """The per-field interrupt payload the frontend renders as radio-set rows."""
+    # Called by review() before interrupt() to present choices to the analyst.
+    # Output example: {"fields": [{"field_name":"email","category":"Identity",...}]}.
     return {
         "fields": [
             {
@@ -32,6 +34,8 @@ def build_payload(candidate_sets: list[FieldCandidates]) -> dict:
 
 def auto_selections(candidate_sets: list[FieldCandidates]) -> list[dict]:
     """Default choice (widest scenario coverage per field) — used to drive non-UI resumes/tests."""
+    # This helper is used by automated resume/test harnesses when no analyst decision is supplied.
+    # Output example: [{"field_name":"email","include":True,"chosen_set_id":"gen_A"}]
     out = []
     for fc in candidate_sets:
         if not fc.sets:
@@ -42,6 +46,7 @@ def auto_selections(candidate_sets: list[FieldCandidates]) -> list[dict]:
 
 
 def _to_selections(decision) -> list[ReviewSelection]:
+    # Accept either the interrupt return payload or a direct resume dict.
     raw = decision.get("review_selections", []) if isinstance(decision, dict) else (decision or [])
     selections = []
     for r in raw:
@@ -59,4 +64,5 @@ def review(state: AgentState) -> dict:
     from langgraph.types import interrupt  # lazy: package importable without langgraph
 
     decision = interrupt(build_payload(state.get("candidate_sets", [])))
+    # `interrupt()` returns the analyst decision payload; normalize it to ReviewSelection objects.
     return {"review_selections": _to_selections(decision)}

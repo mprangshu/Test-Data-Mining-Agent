@@ -45,6 +45,8 @@ _CATEGORY_RULES = [
 
 
 def _infer(name: str) -> tuple[str, list[str]]:
+    # Infer a field category and constraint list from its name.
+    # Output example: ("Identity", ["required", "email_format"]) for "user_email".
     low = name.lower()
     for subs, cat, cons in _CATEGORY_RULES:
         if any(s in low for s in subs):
@@ -53,6 +55,8 @@ def _infer(name: str) -> tuple[str, list[str]]:
 
 
 def _norm_scenarios(values) -> list[str]:
+    # Normalize raw scenario labels to the canonical set.
+    # Example input: ["Valid", "NEGATIVE", "invalid"] -> ["valid", "negative"]
     out: list[str] = []
     for v in values:
         if v is None:
@@ -64,6 +68,10 @@ def _norm_scenarios(values) -> list[str]:
 
 
 def _emit(acc: "OrderedDict[str, dict]", name: str, scenarios: list[str], ids: list[str]) -> None:
+    # Add or update a parsed field entry in the accumulator.
+    # This is called from _from_table/_from_txt to collect field metadata.
+    # The accumulator entries look like:
+    # {"email": {"category": "Identity", "constraints": [...], "scenarios": ["valid"], "ids": ["TC1"]}}
     name = (name or "").strip()
     if not name or name in _NON_FIELD:
         return
@@ -79,6 +87,9 @@ def _emit(acc: "OrderedDict[str, dict]", name: str, scenarios: list[str], ids: l
 
 
 def _from_table(acc, headers: list[str], rows: list[dict]) -> None:
+    # Extract candidate field names and labels from tabular inputs.
+    # Fields are headers excluding scenario/ID columns.
+    # Example: headers ["email","scenario_type","test_case_id"] -> fields ["email"].
     fields = [h for h in headers if h and h not in _NON_FIELD]
     scen_vals, id_vals = [], []
     for r in rows:
@@ -94,12 +105,15 @@ def _from_table(acc, headers: list[str], rows: list[dict]) -> None:
 
 
 def _read_csv(path: str):
+    # Read a CSV and return (headers, rows).
+    # Sample output: (["email","order_total"], [{"email":"a@b.com","order_total":"12.34"}])
     with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         return list(reader.fieldnames or []), list(reader)
 
 
 def _read_xlsx(path: str):
+    # Read an XLSX workbook, return (headers, rows) from the active sheet.
     from openpyxl import load_workbook
 
     wb = load_workbook(path, read_only=True, data_only=True)
@@ -117,6 +131,8 @@ def _read_xlsx(path: str):
 
 
 def _read_json(path: str):
+    # Read JSON as either a list of records or a single object.
+    # Sample output: (["email"], [{"email":"a@b.com"}])
     with open(path, encoding="utf-8") as f:
         doc = json.load(f)
     if isinstance(doc, list) and doc and isinstance(doc[0], dict):
@@ -140,6 +156,8 @@ def _select_primary(tables: list[tuple[list[str], list[dict]]]) -> tuple[list[st
     verbatim; only missing columns are filled with "" so every row carries the full column set.
     Schema-only inputs (Gherkin ``.txt``, a JSON ``{"fields": [...]}`` doc) contribute no rows.
     """
+    # Choose the table with the most rows as the primary original dataset.
+    # This output is used directly by synthesise to preserve verbatim rows.
     tables = [(h, r) for h, r in tables if h and r]
     if not tables:
         return [], []
@@ -153,6 +171,8 @@ def _select_primary(tables: list[tuple[list[str], list[dict]]]) -> tuple[list[st
 
 
 def _from_txt(acc, text: str, gaps: list[str], src: str) -> None:
+    # Extract placeholder names from Gherkin-style text and infer scenario tags.
+    # Example text: "Given <email> and <order_total>" -> fields ["email","order_total"]
     placeholders = re.findall(r"<([^>]+)>", text)
     low = text.lower()
     scenarios = ["valid"]
@@ -200,6 +220,7 @@ def parse(state: AgentState) -> dict:
         except Exception as exc:  # never crash — flag and continue (spec §1.4)
             gaps.append(f"parse: skipped {fn} ({type(exc).__name__}: {exc})")
 
+    # Convert the accumulated field metadata to TypedDict dataclasses.
     fields = [
         ParsedField(name=n, category=d["category"], constraints=d["constraints"],
                     source_test_ids=d["ids"], scenario_types=d["scenarios"] or ["valid"])
@@ -216,6 +237,14 @@ def parse(state: AgentState) -> dict:
 
     print(f"NODE_EXIT parse: {len(fields)} fields, {len(input_rows)} original rows "
           f"({len(input_columns)} cols) from {len(files)} file(s)")
+    # Sample return structure:
+    # {
+    #   "parsed_fields": [ParsedField(...)],
+    #   "input_rows": [{...}],
+    #   "input_columns": ["email","order_total"],
+    #   "input_row_count": 3,
+    #   "gaps": []
+    # }
     return {
         "parsed_fields": fields,
         "input_rows": input_rows,

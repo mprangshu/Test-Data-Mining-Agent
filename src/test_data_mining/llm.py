@@ -22,6 +22,7 @@ _DEFAULT_MODEL = "gemini-2.5-flash"
 
 def _load_dotenv() -> None:
     """Populate os.environ from a gitignored repo-root .env (real env vars take precedence)."""
+    # Load environment variables from .env if present, without overwriting existing vars.
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     path = os.path.join(root, ".env")
     if not os.path.exists(path):
@@ -43,6 +44,7 @@ _load_dotenv()
 
 def get_llm() -> Optional[Callable[[str], str]]:
     """Return a ``prompt -> text`` callable backed by Gemini, or ``None`` if unavailable."""
+    # Only create a Gemini client if the API key exists and the SDK is importable.
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return None
@@ -66,6 +68,7 @@ def get_llm() -> Optional[Callable[[str], str]]:
     model = os.environ.get("GEMINI_MODEL", _DEFAULT_MODEL)
 
     def _call(prompt: str) -> str:
+        # Send the prompt to Gemini and return the trimmed text result.
         resp = client.models.generate_content(model=model, contents=prompt)
         return (getattr(resp, "text", "") or "").strip()
 
