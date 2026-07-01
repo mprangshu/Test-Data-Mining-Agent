@@ -116,33 +116,41 @@ class OutputRow:
 class AgentState(TypedDict, total=False):
     input_path: str
 
-    parsed_fields: list[ParsedField]            # parse
-    input_rows: list[dict[str, Any]]            # parse — original uploaded rows, VERBATIM
-    input_columns: list[str]                    # parse — exact uploaded column names/order
-    input_row_count: int                        # parse — len(input_rows), for the always-larger guard
-    result_signals: list[ResultSignal]          # load_results
-    seed_values: list[SeedValue]                # load_results
-    existing_data: list[ExistingRecord]         # mongo_lookup
-    retrieved_data: list[RetrievedRecord]       # vector_search
-    coverage_gaps: list[CoverageGap]            # coverage_gap
-    candidate_sets: list[FieldCandidates]       # generate
+    # Populated by `parse`:
+    parsed_fields: list[ParsedField]            # list[ParsedField]
+    input_rows: list[dict[str, Any]]            # original uploaded rows (verbatim)
+    input_columns: list[str]                    # exact uploaded column names/order
+    input_row_count: int                        # len(input_rows)
 
-    review_selections: list[ReviewSelection]    # review (HITL)
+    # Populated by `load_results`:
+    result_signals: list[ResultSignal]          # signals extracted from supporting test results
+    seed_values: list[SeedValue]                # few-shot seeds from passing results
 
-    final_dataset: list[dict[str, Any]]         # synthesise — clean rows (fields only, for CSV)
-    output_rows: list[OutputRow]                # synthesise — rows WITH provenance (for the UI/API)
-    report: Optional[dict[str, Any]]            # synthesise
+    # Populated by data-gather nodes:
+    existing_data: list[ExistingRecord]         # mongo_lookup -> ExistingRecord entries
+    retrieved_data: list[RetrievedRecord]       # vector_search -> RetrievedRecord entries
+    coverage_gaps: list[CoverageGap]            # coverage_gap -> missing scenario coverage
+    candidate_sets: list[FieldCandidates]       # generate -> lists of CandidateSet per field
 
-    round_index: int                            # iterative loop (Phase 4): which round we're on
-    seed_selection: list[dict[str, Any]]        # rows the user picked to seed the next round
+    # Populated by reviewer (HITL):
+    review_selections: list[ReviewSelection]    # review outputs selected CandidateSet ids
 
-    persist_decision: Optional[bool]            # /persist
+    # Populated by synthesise:
+    final_dataset: list[dict[str, Any]]         # clean rows (fields only) for CSV export
+    output_rows: list[OutputRow]                # rows WITH provenance for UI/API
+    report: Optional[dict[str, Any]]            # human-readable summary & metrics
+
+    # Iteration + user choices:
+    round_index: int                            # which round of generation we're on
+    seed_selection: list[dict[str, Any]]        # user-picked rows for the next round
+
+    # Persist decision populated by frontend / backend persist endpoint
+    persist_decision: Optional[bool]
     persist_label: Optional[str]
     persist_tags: Optional[list[str]]
     persist_receipt: Optional[dict[str, Any]]
 
-    # graceful degradation — operator.add reducers so notes accumulate across nodes
-    # (and parallel data-gather nodes can write them without an InvalidUpdateError).
+    # graceful degradation — string notes/errors collected across nodes (operator.add reducers)
     gaps: Annotated[list[str], operator.add]
     errors: Annotated[list[str], operator.add]
 

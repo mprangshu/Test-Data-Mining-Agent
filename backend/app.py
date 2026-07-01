@@ -54,10 +54,13 @@ _ROUNDS: dict[str, dict] = {}     # session → latest working state (post-resum
 # Helpers
 # --------------------------------------------------------------------------- #
 def _ext(name: str) -> str:
+    # Extract the file extension (lowercase). Used to validate upload file types.
     return os.path.splitext(name or "")[1].lower()
 
 
 def _save_uploads(files: list[UploadFile], dst: str, allowed: set[str]) -> int:
+    # Save a batch of uploaded files to disk, validating size and extension.
+    # Returns the count of successfully saved files. Callers: /mine endpoint.
     if len(files) > MAX_FILES:
         raise HTTPException(status_code=413, detail=f"Too many files (max {MAX_FILES}).")
     saved = 0
@@ -80,6 +83,8 @@ def _save_uploads(files: list[UploadFile], dst: str, allowed: set[str]) -> int:
 
 
 def _save_text(text: str, dst: str, fmt: str) -> None:
+    # Save pasted text to disk, auto-detecting format (JSON, Gherkin, or CSV).
+    # Output: one file created in `dst` directory. Caller: /mine endpoint.
     if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
         raise HTTPException(status_code=413, detail=f"Pasted text exceeds {MAX_TEXT_BYTES} bytes.")
     fmt = (fmt or "auto").lower()
@@ -96,6 +101,8 @@ def _save_text(text: str, dst: str, fmt: str) -> None:
 
 
 def _summarise(node: str, u: dict | None) -> str:
+    # Generate a human-readable summary of node outputs for streaming NDJSON events.
+    # Output: single-line string (e.g., "5 fields", "12 signals"). Caller: _stream_events.
     u = u or {}
     return {
         "parse": f"{len(u.get('parsed_fields', []))} fields",
@@ -111,6 +118,9 @@ def _summarise(node: str, u: dict | None) -> str:
 
 
 def _result_payload(state: dict, meta: dict) -> dict:
+    # Assemble a JSON-serializable result payload from the final graph state.
+    # Output example: {"type": "result", "report": {...}, "final_dataset": [...]}.
+    # Callers: /resume, /mine (after paused session finishes), /generate-more.
     payload = {
         "type": "result",
         "meta": {**meta, "fields": len(state.get("parsed_fields", []))},
@@ -126,6 +136,9 @@ def _result_payload(state: dict, meta: dict) -> dict:
 
 
 def _stream_events(graph_input, config: dict, session: str, meta: dict, cleanup_dir: str | None = None):
+    # Generator that streams NDJSON events from the graph as it executes.
+    # Yields node updates, then either an interrupt (paused at review) or a final result.
+    # Callers: /mine and /resume endpoints. Output: gen() yields NDJSON lines.
     def gen():
         try:
             last = perf_counter()
@@ -164,6 +177,7 @@ def _stream_events(graph_input, config: dict, session: str, meta: dict, cleanup_
 # --------------------------------------------------------------------------- #
 @app.get("/health")
 def health() -> dict:
+    # Health check endpoint. Always returns 200 OK.
     return {"status": "ok"}
 
 
@@ -174,7 +188,11 @@ def mine(
     text: str | None = Form(None),
     format: str = Form("auto"),
 ) -> StreamingResponse:
-    """Mine inputs and stream the agent trace to the review gate (NDJSON)."""
+    """Mine inputs and stream the agent trace to the review gate (NDJSON).
+
+    Inputs: test case files/text + optional result files. Saves them to a session dir.
+    Output: NDJSON stream of node updates, ends with an "interrupt" event at the review gate.
+    """
     session = uuid.uuid4().hex[:12]
     session_dir = os.path.join(UPLOADS_ROOT, session)
     tc_dir = os.path.join(session_dir, "test_cases")
@@ -202,8 +220,12 @@ def mine(
 
 
 @app.post("/resume")
-def resume(session: str = Form(...), review_selections: str = Form("[]")) -> StreamingResponse:
-    """Resume a paused run with the analyst's set selections; stream to the final result."""
+def resume(session: str = Form(...), review_selections: str = Form("")) -> StreamingResponse:
+    """Resume a paused run with the analyst's set selections; stream to the final result.
+
+    Inputs: session ID + JSON array of ReviewSelection objects from /mine interrupt.
+    Output: NDJSON stream of remaining node updates, ends with final "result" event.
+    """
     config = {"configurable": {"thread_id": session}}
     snapshot = GRAPH.get_state(config)
     if not snapshot.next:
@@ -224,16 +246,23 @@ def resume(session: str = Form(...), review_selections: str = Form("[]")) -> Str
 
 def _latest_state(session: str) -> dict:
     """The most recent working state for a session: the latest generate-more round if any, else
-    the graph checkpoint (post-resume)."""
+    the graph checkpoint (post-resume).
+
+    Output: AgentState dict. Callers: /generate-more, /persist use this to get the current dataset.
+    """
     if session in _ROUNDS:
         return _ROUNDS[session]
     return GRAPH.get_state({"configurable": {"thread_id": session}}).values
 
 
 @app.post("/generate-more")
-def generate_more(session: str = Form(...), seed_selection: str = Form("[]")) -> dict:
+def generate_more(session: str = Form(...), seed_selection: str = Form("")) -> dict:
     """Iterative loop (CONTEXT-v3 §1, Q2=replace): the analyst's picked rows seed a fresh grounded
-    round. The selection becomes the new base; everything else is regenerated. Read-only (no save)."""
+    round. The selection becomes the new base; everything else is regenerated. Read-only (no save).
+
+    Inputs: session ID + JSON array of row objects from the current dataset.
+    Output: new result JSON with updated round_index, report, final_dataset, output_rows.
+    """
     state = _latest_state(session)
     if not state or not state.get("final_dataset"):
         raise HTTPException(status_code=404, detail="No generated dataset for this session.")
@@ -278,7 +307,11 @@ def persist(
     label: str = Form("generated_dataset"),
     tags: str = Form(""),
 ) -> dict:
-    """Persist gate: if ``save`` is truthy, write the session's latest dataset to MongoDB + ChromaDB."""
+    """Persist gate: if ``save`` is truthy, write the session's latest dataset to MongoDB + ChromaDB.
+
+    Inputs: session ID, save flag (true/false), label, comma-separated tags.
+    Output: {"saved": true/false, "receipt": {...}} from write_dataset or empty.
+    """
     state = _latest_state(session)
     final_dataset = state.get("final_dataset") if state else None
     if not final_dataset:

@@ -37,7 +37,12 @@ def _bucket(token: str, dim: int) -> int:
 
 
 def embed(text: str, dim: int = _DIM) -> list[float]:
-    """Deterministic unit-length embedding of ``text`` (md5-hashed tokens). Fallback path."""
+    """Deterministic unit-length embedding of ``text`` (md5-hashed tokens).
+
+    Inputs: `text` string, `dim` int (vector dimension).
+    Output: unit-length float vector of length `dim`.
+    Caller: used as the offline fallback for seeding and querying (via `embed_text` / `get_embedding_function`).
+    """
     # Build a bag-of-tokens vector and normalise to unit length.
     vec = [0.0] * dim
     for tok in _TOKEN.findall((text or "").lower()):
@@ -52,7 +57,8 @@ class DeterministicEmbeddingFunction:
     """ChromaDB-compatible embedding function wrapping :func:`embed` (the fallback)."""
 
     def __call__(self, input):  # noqa: A002 - chroma's parameter name is `input`
-        # Encode a batch using the deterministic fallback embedding.
+        # Encode a batch (list[str]) using the deterministic fallback embedding.
+        # Returns: list[list[float]] suitable for ChromaDB upsert/query.
         return [embed(t) for t in input]
 
     def name(self) -> str:
@@ -81,7 +87,11 @@ def _resolve_model_path() -> str | None:
 
 @functools.lru_cache(maxsize=1)
 def _load_st_model():
-    """Load the SentenceTransformer once, OFFLINE. Returns None if unavailable (→ fallback)."""
+    """Load the SentenceTransformer once, OFFLINE.
+
+    Returns the loaded model instance or `None` if no offline snapshot / import failure.
+    Callers: internal wrapper functions `embed_texts` and `get_embedding_function`.
+    """
     # Attempt to load the offline MiniLM model snapshot; fallback to the deterministic embedder if it fails.
     path = _resolve_model_path()
     if not path:
@@ -104,7 +114,8 @@ class LocalMiniLMEmbeddingFunction:
     """ChromaDB-compatible embedding function backed by the local MiniLM model."""
 
     def __call__(self, input):  # noqa: A002 - chroma's parameter name is `input`
-        # Encode a batch using the locally loaded MiniLM model.
+        # Encode a batch (list[str]) using the local MiniLM model and return
+        # a list[list[float]] (embeddings). Normalization is applied by the model.
         model = _load_st_model()
         return model.encode(list(input), normalize_embeddings=True).tolist()
 
@@ -120,12 +131,14 @@ class LocalMiniLMEmbeddingFunction:
 # ── Public API — always go through these so seed & query agree ────────
 def active_embedder_name() -> str:
     # Report the current embedder name for threshold selection and logging.
+    # Caller: diagnostic logging, storage metadata.
     return "minilm-l6-v2" if _load_st_model() is not None else "deterministic"
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed a batch with the active embedder (MiniLM if available, else deterministic)."""
     # Use the loaded MiniLM model when available; otherwise use deterministic hashing.
+    # Output: list of vectors (list[list[float]]). Callers: `get_embedding_function`, `_upsert_chroma`.
     model = _load_st_model()
     if model is not None:
         return model.encode(list(texts), normalize_embeddings=True).tolist()
@@ -141,6 +154,9 @@ def embed_text(text: str) -> list[float]:
 def get_embedding_function():
     """The ChromaDB embedding function for the active embedder (real MiniLM or deterministic)."""
     # Return a ChromaDB-compatible function based on the loaded embedder.
+    # The returned callable implements the Chroma client API: it accepts a list[str]
+    # and returns list[list[float]]. Used by `_upsert_chroma` and clients that need
+    # to pass an embedding_function to persistent collections.
     if _load_st_model() is not None:
         return LocalMiniLMEmbeddingFunction()
     return DeterministicEmbeddingFunction()

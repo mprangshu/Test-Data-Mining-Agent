@@ -31,6 +31,7 @@ def _s(v) -> str:
 
 def _nonempty(values) -> list[str]:
     # Return only the non-empty string values from the input sequence.
+    # Caller: column profilers call this to ignore blanks when inferring types/stats.
     return [_s(v) for v in values if _s(v) != ""]
 
 
@@ -75,7 +76,11 @@ def id_pattern(values) -> tuple[str, int, int] | None:
 
 
 def infer_column_type(values) -> str:
-    """Classify a column by content: numeric | datetime | id | categorical | freetext | empty."""
+    """Classify a column by content: numeric | datetime | id | categorical | freetext | empty.
+
+    Input: sequence of raw values for the column.
+    Output: one of the canonical type strings. Callers: `profile_column`.
+    """
     vals = _nonempty(values)
     if not vals:
         return "empty"
@@ -110,7 +115,9 @@ class ColProfile:
 
 
 def profile_column(name: str, values) -> ColProfile:
-    # Build a profile from the raw column values and detect special types.
+    # Build a ColProfile from the raw column values and detect special types.
+    # Returns a ColProfile dataclass containing type, fill rate, observed values,
+    # and numeric/id summary stats. Callers: `profile_columns`, `IdMinter`.
     all_vals = list(values)
     ne = _nonempty(all_vals)
     fill = (len(ne) / len(all_vals)) if all_vals else 0.0
@@ -158,6 +165,7 @@ class IdMinter:
 
     def mint(self, col: str) -> str:
         # Return the next unique id for the given id-like column.
+        # Output example: prefix + zero-padded number, e.g. 'SUB-00123'.
         n = self._next[col]
         self._next[col] = n + 1
         return f"{self._prefix[col]}{n:0{self._width[col]}d}"
@@ -180,6 +188,8 @@ def correlated_pairs(rows: list[dict], profiles: dict[str, ColProfile],
                      min_strength: float = 0.9) -> list[tuple[str, str]]:
     """Pairs of categorical columns where one strongly predicts the other (≥ min_strength).
     Direction (a→b) means: given a's value, b is almost always the same. Schema-agnostic."""
+    # Returns list of (a,b) pairs where a predicts b. Callers: `synthesise` uses these to
+    # carry correlated partners when perturbing/generated edge cases.
     cats = [c for c, p in profiles.items() if p.ctype == "categorical"]
     out: list[tuple[str, str]] = []
     # Identify categorical column pairs with strong predictive co-occurrence.

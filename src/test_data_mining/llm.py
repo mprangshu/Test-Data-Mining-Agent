@@ -69,6 +69,8 @@ def get_llm() -> Optional[Callable[[str], str]]:
 
     def _call(prompt: str) -> str:
         # Send the prompt to Gemini and return the trimmed text result.
+        # Input: single prompt string. Output: single text string (trimmed).
+        # Callers: `generate` and `synthesise` pass prompts and then validate returned values.
         resp = client.models.generate_content(model=model, contents=prompt)
         return (getattr(resp, "text", "") or "").strip()
 
